@@ -1,0 +1,18 @@
+# PUBLIC BRANCH: hide private development files
+.agents/
+.dev/
+.consult/
+.vscode/
+
+# Python
+__pycache__/
+*.pyc
+
+# Node / build output (zotero-plugin-template)
+node_modules/
+build/
+.scaffold/
+*.xpi
+
+# local env
+.env
