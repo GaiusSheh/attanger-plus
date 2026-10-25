@@ -1,0 +1,16 @@
+{
+  "manifest_version": 2,
+  "name": "__addonName__",
+  "version": "__buildVersion__",
+  "description": "Keeps the linked-file folders in sync with Zotero collections.",
+  "homepage_url": "https://github.com/GaiusSheh/attanger-plus",
+  "author": "YuanFeng Shi",
+  "applications": {
+    "zotero": {
+      "id": "__addonID__",
+      "update_url": "",
+      "strict_min_version": "6.999",
+      "strict_max_version": "10.*"
+    }
+  }
+}

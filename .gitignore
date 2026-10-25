@@ -8,11 +8,12 @@
 __pycache__/
 *.pyc
 
-# Node / build output (zotero-plugin-template)
+# Node / build output (zotero-plugin-scaffold)
 node_modules/
 build/
 .scaffold/
 *.xpi
+*.tsbuildinfo
 
 # local env
 .env

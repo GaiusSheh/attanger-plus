@@ -1,0 +1,31 @@
+{
+  "name": "attanger-plus",
+  "version": "0.1.0",
+  "description": "Companion to Attanger: keeps linked-file folders in sync with Zotero collections.",
+  "config": {
+    "addonName": "Attanger Plus",
+    "addonID": "attanger-plus@gaiussheh",
+    "addonRef": "attangerplus",
+    "addonInstance": "AttangerPlus",
+    "prefsPrefix": "extensions.attanger-plus"
+  },
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "start": "zotero-plugin serve",
+    "build": "zotero-plugin build && tsc --noEmit",
+    "typecheck": "tsc --noEmit",
+    "test": "zotero-plugin test"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/GaiusSheh/attanger-plus.git"
+  },
+  "author": "YuanFeng Shi",
+  "license": "MIT",
+  "devDependencies": {
+    "typescript": "~5.9.3",
+    "zotero-plugin-scaffold": "^0.9.3",
+    "zotero-types": "^4.1.3"
+  }
+}
