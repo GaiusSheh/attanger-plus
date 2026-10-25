@@ -2,7 +2,7 @@ import { testLibraryPaths } from "./paths";
 import { makePdf } from "./pdf";
 
 /*
- * Test library: one positive case per check (C1–C14, requirements §F1.1)
+ * Test library: one positive case per check (C1–C12, C14; requirements §F1.1)
  * next to cases that must NOT be reported. Folders are relative to the files
  * root and use "/"; file contents are given as a text seed, so two files with
  * the same seed are byte-identical copies.
@@ -249,8 +249,7 @@ export const EXTRA_FILES: ExtraFileSpec[] = [
 /** C8 stray folders that are empty. */
 export const EXTRA_EMPTY_FOLDERS = ["Old Folder"];
 
-// C13 (broken SymLiSync junctions) is not covered: it needs a junction and a
-// SymLiSync config outside Zotero.
+// There is no C13: it relied on an external link manager and was dropped.
 
 export interface TestLibrary {
   dataDir: string;
