@@ -45,6 +45,7 @@ export type FluentMessageId =
   | 'issue-C9-empty'
   | 'issue-C9-no-folder'
   | 'menu-check'
+  | 'menu-reveal'
   | 'report-clean'
   | 'report-config'
   | 'report-export'
@@ -60,4 +61,6 @@ export type FluentMessageId =
   | 'report-show'
   | 'report-summary'
   | 'report-window-title'
+  | 'reveal-missing-copy'
+  | 'reveal-missing-file'
   | 'startup-loaded';
