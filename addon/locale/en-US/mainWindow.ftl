@@ -1,1 +1,3 @@
 startup-loaded = { $name } { $version } loaded
+menu-check =
+    .label = Attanger Plus: Check Library…

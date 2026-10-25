@@ -1,0 +1,114 @@
+:root {
+  color-scheme: light dark;
+  --problem: #c4314b;
+  --notice: #8a6d00;
+  --muted: GrayText;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --problem: #ff7b8c;
+    --notice: #e0c060;
+  }
+}
+
+body {
+  margin: 0;
+  padding: 16px 20px;
+  font: message-box;
+  font-size: 13px;
+  background: Canvas;
+  color: CanvasText;
+}
+
+header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+h1 {
+  flex: 1;
+  margin: 0;
+  font-size: 18px;
+}
+
+.meta {
+  margin: 6px 0;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+#config {
+  margin: 12px 0;
+  padding: 8px 12px;
+  border-left: 3px solid var(--notice);
+}
+
+#config h2 {
+  margin: 0 0 4px;
+  font-size: 13px;
+}
+
+details {
+  margin: 10px 0;
+  border-top: 1px solid color-mix(in srgb, CanvasText 15%, transparent);
+  padding-top: 6px;
+}
+
+summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.badge {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 0 6px;
+  border-radius: 8px;
+  font-size: 11px;
+  font-weight: normal;
+  color: Canvas;
+}
+
+.badge.problem {
+  background: var(--problem);
+}
+
+.badge.notice {
+  background: var(--notice);
+}
+
+ul {
+  margin: 6px 0;
+  padding-left: 20px;
+}
+
+li {
+  margin: 3px 0;
+  overflow-wrap: anywhere;
+}
+
+a {
+  color: LinkText;
+  cursor: pointer;
+  text-decoration: none;
+}
+
+a:hover {
+  text-decoration: underline;
+}
+
+.item-link {
+  font-weight: 600;
+}
+
+.show-link {
+  margin-left: 6px;
+  font-size: 11px;
+}
+
+.clean {
+  margin-top: 24px;
+  font-size: 15px;
+}

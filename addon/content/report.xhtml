@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Filled in by src/ui/report.ts. -->
+<html xmlns="http://www.w3.org/1999/xhtml" windowtype="attanger-plus:report">
+  <head>
+    <meta charset="UTF-8" />
+    <title data-l10n-id="report-window-title"></title>
+    <link rel="localization" href="attanger-plus-report.ftl" />
+    <link rel="stylesheet" href="chrome://attangerplus/content/report.css" />
+  </head>
+  <body>
+    <header>
+      <h1 data-l10n-id="report-heading"></h1>
+      <div class="actions">
+        <button id="rerun" data-l10n-id="report-rerun"></button>
+        <button id="export" data-l10n-id="report-export"></button>
+      </div>
+    </header>
+    <p id="root" class="meta"></p>
+    <p id="status" class="meta"></p>
+    <section id="config" hidden="hidden">
+      <h2 data-l10n-id="report-config"></h2>
+      <ul id="config-list"></ul>
+    </section>
+    <main id="results"></main>
+  </body>
+</html>

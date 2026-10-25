@@ -1,4 +1,7 @@
 import { config, version } from "../package.json";
+import { l10nID } from "./ui/l10n";
+import { registerMenus, unregisterMenus } from "./ui/menu";
+import { closeReports } from "./ui/report";
 import { log } from "./utils/log";
 
 // scaffold prefixes FTL file names with the plugin namespace.
@@ -14,6 +17,7 @@ async function onStartup(): Promise<void> {
   // Windows that were already open when the plugin was (re)installed never
   // receive onMainWindowLoad.
   await Promise.all(Zotero.getMainWindows().map((win) => onMainWindowLoad(win)));
+  registerMenus();
 
   addon().data.initialized = true;
   log(`startup done (${version})`);
@@ -22,7 +26,7 @@ async function onStartup(): Promise<void> {
 async function onMainWindowLoad(win: _ZoteroTypes.MainWindow): Promise<void> {
   win.MozXULElement.insertFTLIfNeeded(MAIN_WINDOW_FTL);
   const l10n = new win.Localization([MAIN_WINDOW_FTL]);
-  const msg = await l10n.formatValue("attanger-plus-startup-loaded", {
+  const msg = await l10n.formatValue(l10nID("startup-loaded"), {
     name: config.addonName,
     version,
   });
@@ -34,6 +38,8 @@ async function onMainWindowUnload(win: Window): Promise<void> {
 }
 
 async function onShutdown(): Promise<void> {
+  unregisterMenus();
+  closeReports();
   for (const win of Zotero.getMainWindows()) {
     await onMainWindowUnload(win);
   }

@@ -1,1 +1,3 @@
 startup-loaded = { $name } { $version } 已加载
+menu-check =
+    .label = Attanger Plus：检查文库…

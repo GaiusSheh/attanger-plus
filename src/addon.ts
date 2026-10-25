@@ -1,6 +1,6 @@
-import hooks from "./hooks";
-import type { runCheck } from "./check";
+import { runCheck, type CheckReport } from "./check";
 import type { resetTestLibrary } from "./dev/testLibrary";
+import hooks from "./hooks";
 
 export class Addon {
   readonly rootURI: string;
@@ -11,11 +11,17 @@ export class Addon {
   /** Development builds only (`npm start`); absent from release builds. */
   dev?: {
     resetTestLibrary: typeof resetTestLibrary;
-    /** Until the public check() API lands (Phase 1-4). */
-    runCheck: typeof runCheck;
   };
 
   constructor(rootURI: string) {
     this.rootURI = rootURI;
+  }
+
+  /**
+   * Compare the library with the files root (requirements §F1.4). Read-only;
+   * the result is plain JSON, e.g. for agents calling through zotero-js-bridge.
+   */
+  check(): Promise<CheckReport> {
+    return runCheck();
   }
 }
