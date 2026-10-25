@@ -3,8 +3,12 @@
  *
  * Every destructive dev helper must call this first. The only accepted data
  * directories are the dev instance (`.../Zotero-dev/data`, see .env) and the
- * scaffold test runner (`.../.scaffold/test/data`); the files root is the
- * sibling `literature` folder.
+ * scaffold test runner (`.../.scaffold/test/data`).
+ *
+ * Files root: the dev instance uses the sibling `literature` folder. The test
+ * runner's directory is fixed by scaffold inside the project, i.e. inside
+ * OneDrive, whose read-only folder attributes make it impossible to delete
+ * (known_pits B1), so its root goes to the system temp directory instead.
  */
 export function testLibraryPaths(): { dataDir: string; root: string } {
   const dataDir = Zotero.DataDirectory.dir;
@@ -22,5 +26,8 @@ export function testLibraryPaths(): { dataDir: string; root: string } {
         "expected ...\\Zotero-dev\\data or ...\\.scaffold\\test\\data",
     );
   }
-  return { dataDir, root: PathUtils.join(parent!, "literature") };
+  const root = isDev
+    ? PathUtils.join(parent!, "literature")
+    : PathUtils.join(PathUtils.tempDir, "attanger-plus-test", "literature");
+  return { dataDir, root };
 }

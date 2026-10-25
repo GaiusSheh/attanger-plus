@@ -1,4 +1,5 @@
 import { Addon } from "./addon";
+import { runCheck } from "./check";
 import { resetTestLibrary } from "./dev/testLibrary";
 
 // Loaded by addon/bootstrap.js once per plugin startup. A previous instance
@@ -7,7 +8,7 @@ import { resetTestLibrary } from "./dev/testLibrary";
 if (!Zotero.AttangerPlus) {
   const addon = new Addon(rootURI);
   if (__DEV__) {
-    addon.dev = { resetTestLibrary };
+    addon.dev = { resetTestLibrary, runCheck };
   }
   Zotero.AttangerPlus = addon;
 }

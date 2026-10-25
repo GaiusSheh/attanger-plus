@@ -1,3 +1,4 @@
+import { templateBaseName } from "../utils/zotero";
 import { testLibraryPaths } from "./paths";
 import { makePdf } from "./pdf";
 
@@ -14,6 +15,7 @@ interface CopySpec {
 }
 
 interface AttachmentSpec {
+  /** "{template}" is replaced by Zotero's file name for the parent item. */
   file: string;
   /** Folder of the copy Zotero points at. */
   folder: string;
@@ -45,7 +47,7 @@ export const COLLECTIONS = [
   "Physics",
   "Physics/Optics",
   "Physics/Plasma",
-  "Physics/Plasma/Empty",
+  "Physics/Empty",
   "Chemistry",
   "Notes Only",
 ];
@@ -54,12 +56,13 @@ export const COLLECTIONS = [
 const COLLECTIONS_WITHOUT_FOLDER = ["Notes Only"];
 
 export const ITEMS: ItemSpec[] = [
-  // Clean cases: nothing may be reported for these.
+  // Clean cases: nothing may be reported for these. Their files follow
+  // Zotero's file naming template, so C12 must stay quiet as well.
   {
     name: "ok-single",
     title: "Clean Single Collection Item",
     collections: ["Physics/Optics"],
-    attachments: [{ file: "Ok Single.pdf", folder: "Physics/Optics", seed: "ok-single" }],
+    attachments: [{ file: "{template}.pdf", folder: "Physics/Optics", seed: "ok-single" }],
   },
   {
     name: "ok-multi",
@@ -67,7 +70,7 @@ export const ITEMS: ItemSpec[] = [
     collections: ["Physics/Optics", "Chemistry"],
     attachments: [
       {
-        file: "Ok Multi.pdf",
+        file: "{template}.pdf",
         folder: "Physics/Optics",
         seed: "ok-multi",
         copies: [{ folder: "Chemistry", seed: "ok-multi" }],
@@ -79,8 +82,8 @@ export const ITEMS: ItemSpec[] = [
     title: "Clean Item With Arxiv Version",
     collections: ["Chemistry"],
     attachments: [
-      { file: "Ok Suffix.pdf", folder: "Chemistry", seed: "ok-suffix" },
-      { file: "Ok Suffix - arxiv.pdf", folder: "Chemistry", seed: "ok-suffix-arxiv" },
+      { file: "{template}.pdf", folder: "Chemistry", seed: "ok-suffix" },
+      { file: "{template} - arxiv.pdf", folder: "Chemistry", seed: "ok-suffix-arxiv" },
     ],
   },
   {
@@ -298,7 +301,8 @@ export async function resetTestLibrary(): Promise<TestLibrary> {
     item.setCollections(spec.collections.map((p) => collectionIDs[p]));
     await item.saveTx();
     for (const att of spec.attachments ?? []) {
-      await addAttachment(root, item.id, att);
+      const file = att.file.replace("{template}", templateBaseName(item));
+      await addAttachment(root, item.id, { ...att, file });
     }
     if (spec.trashed) {
       item.deleted = true;
@@ -324,8 +328,12 @@ async function wipeLibrary(libraryID: number): Promise<void> {
   }
   // Erasing a collection erases its subcollections, so repeat until none is
   // left rather than relying on the listing order.
+  // zotero-types lacks the third (includeTrashed) parameter.
+  const listAll = () =>
+    (Zotero.Collections.getByLibrary as (lib: number, recursive: boolean, includeTrashed: boolean) => Zotero.Collection[])
+      .call(Zotero.Collections, libraryID, true, true);
   for (let round = 0; round < 10; round++) {
-    const collections = Zotero.Collections.getByLibrary(libraryID, true);
+    const collections = listAll();
     if (!collections.length) {
       return;
     }
@@ -335,7 +343,7 @@ async function wipeLibrary(libraryID: number): Promise<void> {
       }
     }
   }
-  const left = Zotero.Collections.getByLibrary(libraryID, true).length;
+  const left = listAll().length;
   throw new Error(`Could not erase all collections: ${left} left`);
 }
 
