@@ -107,4 +107,14 @@ export type FluentMessageId =
   | 'reveal-restore-dry-run'
   | 'reveal-restore-failed'
   | 'reveal-restore-prompt'
-  | 'startup-loaded';
+  | 'startup-loaded'
+  | 'unfiled-apply'
+  | 'unfiled-cancel'
+  | 'unfiled-cancel-all'
+  | 'unfiled-done'
+  | 'unfiled-dry-run'
+  | 'unfiled-heading'
+  | 'unfiled-item'
+  | 'unfiled-trash-files'
+  | 'unfiled-trash-item'
+  | 'unfiled-window-title';

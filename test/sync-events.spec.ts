@@ -115,10 +115,18 @@ describe("sync events", function () {
     assert.equal(await md5("Physics/Optics/Renamed Attachment.pdf"), await md5("Physics/Plasma/Renamed Attachment.pdf"));
   });
 
-  it("leaves the files alone when the item leaves its last collection (F3.3 is Phase 3)", async function () {
-    await removeFromCollection(item("c2-parent-direct"), "Physics");
-    await sync().flush();
+  it("leaves the files alone and asks when the item leaves its last collection (F3.3, see unfiled.spec.ts)", async function () {
+    const before = sync().onUnfiled;
+    const asked: string[] = [];
+    sync().onUnfiled = (items) => asked.push(...items.map((u) => u.itemKey));
+    try {
+      await removeFromCollection(item("c2-parent-direct"), "Physics");
+      await sync().flush();
+    } finally {
+      sync().onUnfiled = before;
+    }
     assert.isTrue(await exists("Physics/Parent Direct.pdf"));
+    assert.deepEqual(asked, [item("c2-parent-direct").key]);
   });
 
   it("moves the files of a trashed item into the plugin trash (F4, see trash.spec.ts)", async function () {

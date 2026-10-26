@@ -39,7 +39,7 @@ export async function reconcile(requests: Map<string, Intent>, state: Attachment
       continue;
     }
     const plan = intent.trash
-      ? planTrash(snapshot, entry)
+      ? planTrash(snapshot, entry, intent.formerCollections)
       : intent.restore
         ? planRestore(snapshot, entry)
         : await planEntry(snapshot, entry, hasher, { intent, state });

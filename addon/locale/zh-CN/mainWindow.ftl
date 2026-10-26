@@ -12,11 +12,14 @@ reveal-restore-failed = 没能恢复「{ $file }」，原因见操作日志。
 changes-dry-run = 试运行模式：文件操作（恢复、同步、重新定位）没有真的执行，已记入操作日志；Zotero 里的改动（移出 collection、移进回收站、忽略）照常生效。
 changes-done = 已完成：恢复 { $restored } 份副本，从 collection 移除 { $removed } 次，同步 { $synced } 份副本，重新定位 { $relocated } 个文件，移进回收站 { $trashed } 项，忽略 { $ignored } 条。
 changes-failed = 有 { $count } 项没能完成，原因见操作日志。
+# Shown after the unfiled window has closed, so it lives here (src/ui/unfiled.ts).
+unfiled-done = 加回 collection：{ $cancelled } 个条目；移进回收站：{ $trashedItems } 个条目；删除文件：{ $trashedFiles } 个条目。
+unfiled-dry-run = 试运行开着：Zotero 里的改动已经生效，文件只记了日志，没有挪动。
 menu-remove-current =
     .label = 从当前 collection 移除
 menu-remove-all =
     .label = 从所有 collection 移除
 menu-remove-chosen =
     .label = 从指定 collection 移除…
-remove-confirm-current = 把 { $count } 个条目从「{ $collection }」中移除？它们在这个文件夹里的副本会被删除；只在这一个 collection 中的条目，文件暂时保留原处。
-remove-confirm-all = 把 { $count } 个条目从它们所在的所有 collection 中移除？移除后它们不在任何 collection 中，文件暂时保留原处。
+remove-confirm-current = 把 { $count } 个条目从「{ $collection }」中移除？它们在这个文件夹里的副本会被删除；只在这一个 collection 中的条目，接下来会询问怎么处理它们的文件。
+remove-confirm-all = 把 { $count } 个条目从它们所在的所有 collection 中移除？移除后它们不在任何 collection 中，接下来会询问怎么处理它们的文件。

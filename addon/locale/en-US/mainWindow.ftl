@@ -20,6 +20,9 @@ changes-failed =
         [one] One step could not be completed; see the operation log for why.
        *[other] { $count } steps could not be completed; see the operation log for why.
     }
+# Shown after the unfiled window has closed, so it lives here (src/ui/unfiled.ts).
+unfiled-done = Put back: { $cancelled } item(s); moved to the trash: { $trashedItems } item(s); files deleted: { $trashedFiles } item(s).
+unfiled-dry-run = Dry-run mode is on: the changes in Zotero were made, but files were only logged, not moved.
 menu-remove-current =
     .label = Remove from Current Collection
 menu-remove-all =
@@ -28,11 +31,11 @@ menu-remove-chosen =
     .label = Remove from Chosen Collections…
 remove-confirm-current =
     { $count ->
-        [one] Remove the item from “{ $collection }”? Its copy in that folder is deleted; if it is in no other collection, its file stays where it is for now.
-       *[other] Remove { $count } items from “{ $collection }”? Their copies in that folder are deleted; items in no other collection keep their files where they are for now.
+        [one] Remove the item from “{ $collection }”? Its copy in that folder is deleted; if it is in no other collection, you are asked next what to do with its files.
+       *[other] Remove { $count } items from “{ $collection }”? Their copies in that folder are deleted; for items in no other collection, you are asked next what to do with their files.
     }
 remove-confirm-all =
     { $count ->
-        [one] Remove the item from all its collections? It will be in no collection; its files stay where they are for now.
-       *[other] Remove { $count } items from all their collections? They will be in no collection; their files stay where they are for now.
+        [one] Remove the item from all its collections? It will be in no collection; you are asked next what to do with its files.
+       *[other] Remove { $count } items from all their collections? They will be in no collection; you are asked next what to do with their files.
     }

@@ -56,6 +56,14 @@ interface Marked {
   since: number;
 }
 
+/** An item with files the user just removed from its last collection (§F3.3). */
+export interface Unfiled {
+  itemKey: string;
+  itemTitle: string;
+  /** The collections it was removed from, by ID. */
+  removedFrom: number[];
+}
+
 const { setTimeout, clearTimeout } = ChromeUtils.importESModule("resource://gre/modules/Timer.sys.mjs");
 
 export class SyncQueue {
@@ -72,6 +80,8 @@ export class SyncQueue {
   private chain: Promise<void> = Promise.resolve();
   /** Receives file-manager changes that need the user's decision (set by the UI). */
   onFindings?: (findings: Finding[]) => void;
+  /** Receives items just removed from their last collection, for the user to decide on (§F3.3; set by the UI). */
+  onUnfiled?: (items: Unfiled[]) => void;
 
   start(): void {
     this.stopped = false;
@@ -197,6 +207,28 @@ export class SyncQueue {
       await state.save();
     }
     return findings;
+  }
+
+  /**
+   * Items with files that the user just removed from their last collection
+   * (§F3.3): their files stayed where they were, and the user decides.
+   */
+  private reportUnfiled(done: Reconciled[], intents: Map<string, Intent>): void {
+    const unfiled: Unfiled[] = [];
+    for (const r of done) {
+      const removedFrom = intents.get(r.itemKey)?.removedFrom ?? [];
+      const item = Zotero.Items.getByLibraryAndKey(Zotero.Libraries.userLibraryID, r.itemKey);
+      if (removedFrom.length && item && !item.deleted && r.notes.some((n) => n.kind === "no-collection")) {
+        unfiled.push({ itemKey: r.itemKey, itemTitle: item.getDisplayTitle(), removedFrom });
+      }
+    }
+    if (unfiled.length && !this.stopped) {
+      try {
+        this.onUnfiled?.(unfiled);
+      } catch (e) {
+        log(`sync: asking about unfiled items failed: ${String(e)}`);
+      }
+    }
   }
 
   /** Automatic windows (startup, opening an attachment) leave out what the user ignored. */
@@ -418,7 +450,7 @@ export class SyncQueue {
       this.marked.delete(key);
     }
     if (ready.size) {
-      await reconcile(ready, await this.loadState());
+      this.reportUnfiled(await reconcile(ready, await this.loadState()), ready);
     }
     if (this.marked.size && !force) {
       this.schedule();

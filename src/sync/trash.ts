@@ -18,12 +18,17 @@ import type { Plan, PurgeTrashOp, RelinkOp, UntrashOp } from "./types";
  * 3-2): a disagreement found later is reported by check C14.
  */
 
-/** Move the files of a trashed item, or of its trashed attachments, into the plugin trash. */
-export function planTrash(s: Snapshot, e: EntryInfo): Plan {
+/**
+ * Move the files of a trashed item, or of its trashed attachments, into the
+ * plugin trash; `formerCollections` adds folders of collections the item
+ * has just left (§F3.3).
+ */
+export function planTrash(s: Snapshot, e: EntryInfo, formerCollections: number[] = []): Plan {
   const plan: Plan = { operations: [], notes: [] };
   const inUse = liveUse(s);
   const trashed = e.deleted ? e.attachments : e.attachments.filter((a) => a.deleted);
-  const folders = uniqueFolders(collectionsOf(s, e)).map((c) => c.folder);
+  const former = formerCollections.map((id) => s.collections.get(id)).filter((c) => !!c);
+  const folders = uniqueFolders([...collectionsOf(s, e), ...former]).map((c) => c.folder);
   for (const a of trashed) {
     if (a.linkMode !== "linked" || a.rel === null) {
       continue;

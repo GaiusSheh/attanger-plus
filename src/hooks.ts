@@ -4,6 +4,7 @@ import { registerMenus, unregisterMenus } from "./ui/menu";
 import { closeChangesWindows, showChanges } from "./ui/changes";
 import { closeRemoveDialogs } from "./ui/remove";
 import { closeReports } from "./ui/report";
+import { closeUnfiledWindows, showUnfiled } from "./ui/unfiled";
 import { log } from "./utils/log";
 
 // scaffold prefixes FTL file names with the plugin namespace.
@@ -23,6 +24,9 @@ async function onStartup(): Promise<void> {
   await safely("startup: menus", registerMenus);
   addon().sync.onFindings = (findings) => {
     showChanges(findings).catch((e) => Zotero.logError(e));
+  };
+  addon().sync.onUnfiled = (items) => {
+    showUnfiled(items).catch((e) => Zotero.logError(e));
   };
   addon().sync.start();
 
@@ -55,6 +59,7 @@ async function onShutdown(): Promise<void> {
     closeReports();
     closeRemoveDialogs();
     closeChangesWindows();
+    closeUnfiledWindows();
   });
   for (const win of Zotero.getMainWindows()) {
     await safely("shutdown: main window", () => onMainWindowUnload(win));

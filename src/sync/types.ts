@@ -152,6 +152,11 @@ export interface Intent {
   fill?: string[];
   /** The item, or some of its attachments, just went to Zotero's trash (§F4): their files go to the plugin trash. */
   trash?: boolean;
+  /**
+   * With `trash`: collections the item was just removed from, whose folders
+   * still hold its copies (§F3.3 "keep the item, delete the files").
+   */
+  formerCollections?: number[];
   /** The item, or some of its attachments, just came back from Zotero's trash (§F4): their files come back. */
   restore?: boolean;
 }
