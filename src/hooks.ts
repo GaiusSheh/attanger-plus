@@ -1,6 +1,7 @@
 import { config, version } from "../package.json";
 import { l10nID } from "./ui/l10n";
 import { registerMenus, unregisterMenus } from "./ui/menu";
+import { closeRemoveDialogs } from "./ui/remove";
 import { closeReports } from "./ui/report";
 import { log } from "./utils/log";
 
@@ -42,6 +43,7 @@ async function onShutdown(): Promise<void> {
   await addon().sync.stop();
   unregisterMenus();
   closeReports();
+  closeRemoveDialogs();
   for (const win of Zotero.getMainWindows()) {
     await onMainWindowUnload(win);
   }

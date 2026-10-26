@@ -1,0 +1,40 @@
+:root {
+  color-scheme: light dark;
+}
+
+body {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  box-sizing: border-box;
+  margin: 0;
+  padding: 16px 20px;
+  font: message-box;
+  font-size: 13px;
+  background: Canvas;
+  color: CanvasText;
+}
+
+p {
+  margin: 0 0 8px;
+}
+
+#collections {
+  flex: 1;
+  overflow-y: auto;
+  margin: 0;
+  padding: 4px 0;
+  list-style: none;
+  border: 1px solid GrayText;
+}
+
+#collections li {
+  padding: 3px 8px;
+}
+
+.actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 12px;
+}

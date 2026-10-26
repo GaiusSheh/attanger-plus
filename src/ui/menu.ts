@@ -1,5 +1,6 @@
 import { config } from "../../package.json";
 import { l10nID } from "./l10n";
+import { canRemoveFromAny, canRemoveFromCurrent, removeFromAll, removeFromChosen, removeFromCurrent } from "./remove";
 import { openReport } from "./report";
 import { currentCollection, hasFiles, showInCollectionFolder } from "./reveal";
 
@@ -35,6 +36,39 @@ export function registerMenus(): void {
         },
         onCommand: (_event, context) => {
           showInCollectionFolder(context.items ?? [], currentCollection()).catch((e) => Zotero.logError(e));
+        },
+      },
+      // Not a submenu: item-menu submenus are broken before Zotero 9.0.1. No
+      // separator either: Zotero groups plugin entries under its own and
+      // rejects top-level separators here (known_pits A11).
+      {
+        menuType: "menuitem",
+        l10nID: l10nID("menu-remove-current"),
+        onShowing: (_event, context) => {
+          context.setEnabled(canRemoveFromCurrent(context.items ?? [], currentCollection()));
+        },
+        onCommand: (_event, context) => {
+          removeFromCurrent(context.items ?? [], currentCollection()).catch((e) => Zotero.logError(e));
+        },
+      },
+      {
+        menuType: "menuitem",
+        l10nID: l10nID("menu-remove-all"),
+        onShowing: (_event, context) => {
+          context.setEnabled(canRemoveFromAny(context.items ?? []));
+        },
+        onCommand: (_event, context) => {
+          removeFromAll(context.items ?? []).catch((e) => Zotero.logError(e));
+        },
+      },
+      {
+        menuType: "menuitem",
+        l10nID: l10nID("menu-remove-chosen"),
+        onShowing: (_event, context) => {
+          context.setEnabled(canRemoveFromAny(context.items ?? []));
+        },
+        onCommand: (_event, context) => {
+          removeFromChosen(context.items ?? [], currentCollection()).catch((e) => Zotero.logError(e));
         },
       },
     ],

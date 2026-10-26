@@ -1,5 +1,5 @@
 import { log } from "../utils/log";
-import { reconcile, scanAtStartup, type ScanSummary } from "./reconcile";
+import { reconcile, scanAtStartup, type Reconciled, type ScanSummary } from "./reconcile";
 import { AttachmentState } from "./state";
 import type { Intent } from "./types";
 
@@ -54,10 +54,7 @@ export class SyncQueue {
       ["item", "collection-item"],
       "attanger-plus",
     );
-    this.startupTimer = setTimeout(() => {
-      this.startupTimer = undefined;
-      void this.scan();
-    }, STARTUP_SCAN_DELAY_MS);
+    this.scanLater();
   }
 
   async stop(): Promise<void> {
@@ -109,16 +106,21 @@ export class SyncQueue {
       }
       if (this.paused) {
         // Try again later rather than never.
-        this.startupTimer = setTimeout(() => {
-          this.startupTimer = undefined;
-          void this.scan();
-        }, STARTUP_SCAN_DELAY_MS);
+        this.scanLater();
         return;
       }
       const summary: ScanSummary = await scanAtStartup(await this.loadState());
       const removed = summary.tempFiles.filter((r) => r.status === "done").length;
       log(`sync startup scan: ${removed}/${summary.tempFiles.length} temporary files removed, ${summary.recorded} attachments recorded, ${summary.forgotten} forgotten`);
     });
+  }
+
+  private scanLater(): void {
+    this.startupTimer = setTimeout(() => {
+      this.startupTimer = undefined;
+      // Failures are logged by enqueue().
+      this.scan().catch(() => {});
+    }, STARTUP_SCAN_DELAY_MS);
   }
 
   private onNotify(event: string, type: string, ids: (string | number)[], extraData: Record<string, unknown>): void {
@@ -205,7 +207,8 @@ export class SyncQueue {
     }
     this.timer = setTimeout(() => {
       this.timer = undefined;
-      void this.enqueue(() => this.process(false));
+      // Failures are logged by enqueue().
+      this.enqueue(() => this.process(false)).catch(() => {});
     }, QUIET_MS);
   }
 
@@ -231,9 +234,21 @@ export class SyncQueue {
     }
   }
 
-  private enqueue(work: () => Promise<void>): Promise<void> {
-    const run = this.chain.then(work).catch((e) => log(`sync failed: ${String(e)}`));
-    this.chain = run;
+  /**
+   * Reconcile these items now, in turn with any other run, and return what
+   * was done (e.g. restoring a copy on the user's request, §F2).
+   */
+  reconcileNow(requests: Map<string, Intent>): Promise<Reconciled[]> {
+    return this.enqueue(async () => reconcile(requests, await this.loadState()));
+  }
+
+  /** Runs `work` after everything queued before it; its error reaches the caller and the log. */
+  private enqueue<T>(work: () => Promise<T>): Promise<T> {
+    const run = this.chain.then(work);
+    this.chain = run.then(
+      () => undefined,
+      (e) => log(`sync failed: ${String(e)}`),
+    );
     return run;
   }
 
