@@ -3,7 +3,7 @@ import { getPref } from "../utils/prefs";
 import { findingID, findingsOf, type Finding } from "./changes";
 import { writableRoot } from "./guard";
 import { execute } from "./ops";
-import { reconcile, scanAtStartup, type Reconciled, type ScanSummary } from "./reconcile";
+import { reconcile, recordSynced, scanAtStartup, type Reconciled, type ScanSummary } from "./reconcile";
 import { AttachmentState } from "./state";
 import type { Intent, Operation, OpResult } from "./types";
 
@@ -21,6 +21,13 @@ import type { Intent, Operation, OpResult } from "./types";
  * Changes made in the file manager (§F3.6–F3.8) are looked for at the
  * startup scan, when an attachment is opened, and on request (the check
  * report); what needs the user's decision goes to `onFindings`.
+ *
+ * Changes that Zotero sync brings in from another device are that device's
+ * to carry out; its files arrive through the user's file sync (Phase 3 plan,
+ * 3-1). They only bring the attachment records up to date. Sync saves items
+ * with `skipRenameFile` in the event data (Zotero's syncLocal.js), which
+ * nothing else sets; collection-item events carry no data, but follow the
+ * item's own event in the same commit.
  */
 
 /** Quiet time before marked items are reconciled. */
@@ -31,6 +38,8 @@ const ATTANGER_MAX_WAIT_MS = 30_000;
 const FRESH_STORED_MS = 60_000;
 /** The startup scan waits until Zotero has settled. */
 const STARTUP_SCAN_DELAY_MS = 10_000;
+/** How long a synced change of an item's collections waits for its collection-item events. */
+const SYNCED_COLLECTIONS_MS = 60_000;
 
 const ATTANGER_ID = "zoteroattanger@polygon.org";
 
@@ -46,6 +55,8 @@ const { setTimeout, clearTimeout } = ChromeUtils.importESModule("resource://gre/
 
 export class SyncQueue {
   private marked = new Map<string, Marked>();
+  /** Items whose collections sync just changed: item ID -> when; consumed by their collection-item events. */
+  private syncedCollections = new Map<number, number>();
   private timer?: number;
   private startupTimer?: number;
   private observerID?: string;
@@ -138,8 +149,10 @@ export class SyncQueue {
       if (this.stopped) {
         return;
       }
-      if (this.paused) {
-        // Try again later rather than never.
+      if (this.paused || syncInProgress()) {
+        // Try again later rather than never. During a sync the library is
+        // half way between two states, and a synced rename would look like
+        // one made here.
         this.scanLater();
         return;
       }
@@ -232,6 +245,9 @@ export class SyncQueue {
       if (!item || item.libraryID !== Zotero.Libraries.userLibraryID) {
         continue;
       }
+      if (this.takeSyncedCollections(itemID)) {
+        continue;
+      }
       const m = this.mark(entryKey(item));
       if (event === "add") {
         m.addedTo.add(collectionID);
@@ -259,10 +275,28 @@ export class SyncQueue {
     if (event !== "add" && event !== "modify") {
       return;
     }
+    const synced: string[] = [];
     for (const id of ids) {
       const item = Zotero.Items.get(Number(id));
+      if (!item || item.libraryID !== Zotero.Libraries.userLibraryID) {
+        continue;
+      }
+      const data = extraData?.[id] as { skipRenameFile?: boolean; changed?: { collections?: unknown } } | undefined;
+      if (data?.skipRenameFile) {
+        // A new item, or one whose collections changed: its collection-item
+        // events follow in the same commit.
+        if (item.isTopLevelItem() && (event === "add" || data.changed?.collections !== undefined)) {
+          this.syncedCollections.set(item.id, Date.now());
+        }
+        if (item.isAttachment()) {
+          synced.push(item.key);
+        }
+        continue;
+      }
+      // A change made here; its collection-item events (if any) are ours.
+      this.syncedCollections.delete(item.id);
       // Regular items join collections through collection-item events.
-      if (!item || !item.isAttachment() || item.libraryID !== Zotero.Libraries.userLibraryID) {
+      if (!item.isAttachment()) {
         continue;
       }
       const m = this.mark(entryKey(item));
@@ -270,6 +304,36 @@ export class SyncQueue {
         m.fill.add(item.key);
       }
     }
+    if (synced.length) {
+      this.enqueue(() => this.noteSynced(synced)).catch(() => {});
+    }
+  }
+
+  /**
+   * Whether sync just changed this item's collections. Kept for all of the
+   * commit's collection-item events (adds and removes come in separate
+   * calls); a change made here clears it, as it comes with an item event
+   * of its own first.
+   */
+  private takeSyncedCollections(itemID: number): boolean {
+    const now = Date.now();
+    for (const [id, at] of this.syncedCollections) {
+      if (now - at > SYNCED_COLLECTIONS_MS) {
+        this.syncedCollections.delete(id);
+      }
+    }
+    return this.syncedCollections.has(itemID);
+  }
+
+  /** Synced attachments: their records follow Zotero, their files are left to the device that changed them. */
+  private async noteSynced(attachmentKeys: string[]): Promise<void> {
+    const root = writableRoot();
+    const state = await this.loadState();
+    for (const key of attachmentKeys) {
+      recordSynced(root, key, state);
+    }
+    await state.save();
+    log(`sync: ${attachmentKeys.length} attachment(s) changed by Zotero sync; records updated, files left alone`);
   }
 
   /** An attachment was opened: look at its item now (known_pits A7: `file` `open`). */
@@ -391,6 +455,11 @@ function attachmentKeysOf(entryKeys: string[]): Set<string> {
 function entryKey(item: Zotero.Item): string {
   const parent = item.parentItemID ? Zotero.Items.get(item.parentItemID) : null;
   return parent ? parent.key : item.key;
+}
+
+/** Whether Zotero is syncing its data now. */
+function syncInProgress(): boolean {
+  return !!(Zotero.Sync as unknown as { Runner?: { syncInProgress?: boolean } }).Runner?.syncInProgress;
 }
 
 /** Whether Attanger is active and will move (and so convert) new stored attachments. */

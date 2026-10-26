@@ -101,6 +101,28 @@ export async function scanAtStartup(state: AttachmentState): Promise<ScanSummary
   return { tempFiles, purged, recorded, forgotten };
 }
 
+/**
+ * Record the name and folder Zotero now stores for an attachment changed by
+ * sync. Its file may not have arrived yet, so nothing is read from disk; the
+ * size and time are kept only if the path is the same.
+ */
+export function recordSynced(root: string, attachmentKey: string, state: AttachmentState): void {
+  const attachment = Zotero.Items.getByLibraryAndKey(Zotero.Libraries.userLibraryID, attachmentKey);
+  if (!attachment || attachment.attachmentLinkMode !== Zotero.Attachments.LINK_MODE_LINKED_FILE) {
+    return;
+  }
+  const path = attachment.getFilePath();
+  const rel = path ? relativeTo(root, path) : null;
+  if (!path || rel === null) {
+    return;
+  }
+  const name = baseOf(rel);
+  const folder = dirOf(rel);
+  const previous = state.get(attachmentKey);
+  const same = !!previous && previous.name === name && pathKey(previous.folder) === pathKey(folder);
+  state.set(attachmentKey, same ? previous : { name, folder, size: 0, mtime: 0, md5: "" });
+}
+
 /** Current name and folder of the copy Zotero points at; the MD5 is kept while size and mtime match. */
 async function record(root: string, attachmentKey: string, state: AttachmentState): Promise<void> {
   const attachment = Zotero.Items.getByLibraryAndKey(Zotero.Libraries.userLibraryID, attachmentKey);
