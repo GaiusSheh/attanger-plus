@@ -264,7 +264,28 @@ export interface TestLibrary {
 /** Wipe the dev/test library and its files root, then rebuild the fixtures. */
 export async function resetTestLibrary(): Promise<TestLibrary> {
   const paths = testLibraryPaths();
-  return withAttangerPaused(() => buildTestLibrary(paths));
+  return withSyncPaused(() => withAttangerPaused(() => buildTestLibrary(paths)));
+}
+
+/**
+ * The plugin's own copy maintenance would react to the fixtures being built
+ * (and fill in the copies they deliberately lack). The running plugin's
+ * instance is reached through the global: test bundles import their own
+ * copies of the modules.
+ */
+async function withSyncPaused<T>(fn: () => Promise<T>): Promise<T> {
+  const sync = Zotero.AttangerPlus?.sync;
+  if (!sync) {
+    return fn();
+  }
+  await sync.pause();
+  try {
+    return await fn();
+  } finally {
+    // Let the last Notifier events arrive while still paused.
+    await Zotero.Promise.delay(200);
+    sync.resume();
+  }
 }
 
 const ATTANGER_ID = "zoteroattanger@polygon.org";

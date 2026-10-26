@@ -18,6 +18,7 @@ async function onStartup(): Promise<void> {
   // receive onMainWindowLoad.
   await Promise.all(Zotero.getMainWindows().map((win) => onMainWindowLoad(win)));
   registerMenus();
+  addon().sync.start();
 
   addon().data.initialized = true;
   log(`startup done (${version})`);
@@ -38,6 +39,7 @@ async function onMainWindowUnload(win: Window): Promise<void> {
 }
 
 async function onShutdown(): Promise<void> {
+  await addon().sync.stop();
   unregisterMenus();
   closeReports();
   for (const win of Zotero.getMainWindows()) {

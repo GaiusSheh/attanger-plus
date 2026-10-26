@@ -4,7 +4,7 @@ import { TEMP_SUFFIX, type DiskFile } from "../check/snapshot";
 import { isDryRun } from "../utils/prefs";
 import { resolveInRoot, Skip, writableRoot } from "./guard";
 import { appendLog } from "./log";
-import type { CopyOp, DeleteOp, Operation, OpResult, RelinkOp, RenameOp } from "./types";
+import type { CopyOp, DeleteOp, DiscardTempOp, Operation, OpResult, RelinkOp, RenameOp } from "./types";
 
 /*
  * Carry out planned operations one at a time. Each re-checks its
@@ -57,6 +57,8 @@ function pathsOf(operation: Operation): string[] {
       return [operation.path, operation.keep];
     case "relink":
       return [operation.to];
+    case "discard-temp":
+      return [operation.path];
   }
 }
 
@@ -70,7 +72,22 @@ async function run(root: string, operation: Operation, hasher: Hasher): Promise<
       return rename(root, operation);
     case "relink":
       return relink(root, operation, hasher);
+    case "discard-temp":
+      return discardTemp(root, operation);
   }
+}
+
+/** Only ever a file carrying the plugin's own temporary suffix. */
+async function discardTemp(root: string, op: DiscardTempOp): Promise<OpResult> {
+  const path = resolveInRoot(root, op.path);
+  if (!op.path.endsWith(TEMP_SUFFIX)) {
+    throw new Skip("not-a-temporary-file", op.path);
+  }
+  if (!(await fileAt(path))) {
+    return { operation: op, status: "unchanged", reason: "already-absent" };
+  }
+  await removeFile(path);
+  return { operation: op, status: "done" };
 }
 
 async function copy(root: string, op: CopyOp, hasher: Hasher): Promise<OpResult> {

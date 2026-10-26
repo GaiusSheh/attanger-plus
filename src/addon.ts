@@ -1,6 +1,7 @@
 import { runCheck, type CheckReport } from "./check";
 import type { resetTestLibrary } from "./dev/testLibrary";
 import hooks from "./hooks";
+import { SyncQueue } from "./sync/queue";
 
 export class Addon {
   readonly rootURI: string;
@@ -8,6 +9,11 @@ export class Addon {
     initialized: false,
   };
   readonly hooks = hooks;
+  /**
+   * Copy maintenance (requirements §F3): reacts to Zotero events. flush(),
+   * pause() and resume() are for tests and agents.
+   */
+  readonly sync = new SyncQueue();
   /** Development builds only (`npm start`); absent from release builds. */
   dev?: {
     resetTestLibrary: typeof resetTestLibrary;

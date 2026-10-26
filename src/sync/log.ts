@@ -20,8 +20,8 @@ export interface LogRecord {
   status: OpResult["status"];
   reason?: string;
   op: string;
-  itemKey: string;
-  attachmentKey: string;
+  itemKey?: string;
+  attachmentKey?: string;
   from?: string;
   to?: string;
   path?: string;

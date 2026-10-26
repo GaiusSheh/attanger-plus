@@ -71,6 +71,8 @@ export interface Snapshot {
   folders: Map<string, string>;
   /** Plugin trash: name of each subfolder ("" for loose files) -> its files. */
   trash: Map<string, DiskFile[]>;
+  /** Temporary copies left behind by an interrupted write (TEMP_SUFFIX), outside the plugin trash. */
+  tempFiles: DiskFile[];
 }
 
 export async function takeSnapshot(root: string): Promise<Snapshot> {
@@ -177,6 +179,7 @@ async function readDisk(root: string) {
   const files = new Map<string, DiskFile>();
   const folders = new Map<string, string>();
   const trash = new Map<string, DiskFile[]>();
+  const tempFiles: DiskFile[] = [];
 
   async function walk(abs: string, rel: string, depth: number, onFile: (f: DiskFile) => void, inTrash: boolean) {
     if (depth > MAX_DEPTH) {
@@ -195,6 +198,8 @@ async function readDisk(root: string) {
           folders.set(pathKey(childRel), childRel);
         }
         await walk(child, childRel, depth + 1, onFile, inTrash);
+      } else if (info.type === "regular" && !inTrash && name.endsWith(TEMP_SUFFIX)) {
+        tempFiles.push({ rel: childRel, abs: child, size: info.size ?? 0, mtime: info.lastModified ?? 0 });
       } else if (info.type === "regular" && !isIgnoredFile(name)) {
         onFile({ rel: childRel, abs: child, size: info.size ?? 0, mtime: info.lastModified ?? 0 });
       }
@@ -218,7 +223,7 @@ async function readDisk(root: string) {
   }
 
   await walk(root, "", 0, (f) => files.set(pathKey(f.rel), f), false);
-  return { files, folders, trash };
+  return { files, folders, trash, tempFiles };
 }
 
 function isIgnoredFile(name: string): boolean {

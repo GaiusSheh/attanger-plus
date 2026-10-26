@@ -38,7 +38,13 @@ export interface RelinkOp {
   to: string;
 }
 
-export type Operation = CopyOp | DeleteOp | RenameOp | RelinkOp;
+/** Remove a temporary copy left behind by an interrupted copy (TEMP_SUFFIX). */
+export interface DiscardTempOp {
+  op: "discard-temp";
+  path: string;
+}
+
+export type Operation = CopyOp | DeleteOp | RenameOp | RelinkOp | DiscardTempOp;
 
 /**
  * - done: carried out and verified

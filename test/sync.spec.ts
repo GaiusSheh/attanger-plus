@@ -7,7 +7,7 @@ import { resetTestLibrary, type TestLibrary } from "../src/dev/testLibrary";
 import { resolveInRoot, Skip, writableRoot } from "../src/sync/guard";
 import { logFileFor } from "../src/sync/log";
 import { execute } from "../src/sync/ops";
-import { planEntry } from "../src/sync/plan";
+import { isNumberedVariant, planEntry } from "../src/sync/plan";
 import { AttachmentState, stateFile } from "../src/sync/state";
 import type { Intent, Operation } from "../src/sync/types";
 import { getPref, isDryRun, setPref } from "../src/utils/prefs";
@@ -29,6 +29,8 @@ describe("sync", function () {
   const attachmentOf = (it: Zotero.Item) => Zotero.Items.get(it.getAttachments()[0]) as Zotero.Item;
   const collectionID = (path: string) =>
     (Zotero.Collections.getByLibraryAndKey(libraryID(), lib.collections[path]) as Zotero.Collection).id;
+  const pointsAt = (it: Zotero.Item, rel: string) =>
+    assert.equal(pathKey(attachmentOf(it).getFilePath() as string), pathKey(abs(rel)));
 
   async function planFor(it: Zotero.Item, intent?: Intent, state?: AttachmentState) {
     const snapshot = await takeSnapshot(lib.root);
@@ -79,13 +81,17 @@ describe("sync", function () {
     );
   }
 
+  // These tests plan and execute by hand; the running plugin's event-driven
+  // copy maintenance must not act on the same files meanwhile.
   before(async function () {
     dryRunBefore = getPref("dryRun");
+    await Zotero.AttangerPlus!.sync.pause();
     lib = await resetTestLibrary();
   });
 
   after(function () {
     setPref("dryRun", dryRunBefore === false ? false : true);
+    Zotero.AttangerPlus!.sync.resume();
   });
 
   describe("settings and guards", function () {
@@ -141,6 +147,13 @@ describe("sync", function () {
   });
 
   describe("plan", function () {
+    it("recognizes names numbered to avoid a clash", function () {
+      const yes = ["A b_1.pdf", "A b_12.pdf", "A b 2.pdf", "A b (1).pdf", "a B_1.PDF"];
+      const no = ["A b.pdf", "A b_x.pdf", "A b_1.txt", "A bc_1.pdf", "A b - arxiv.pdf", "A b_1_2.pdf"];
+      assert.deepEqual(yes.map((n) => isNumberedVariant(n, "A b.pdf")), yes.map(() => true));
+      assert.deepEqual(no.map((n) => isNumberedVariant(n, "A b.pdf")), no.map(() => false));
+    });
+
     it("plans nothing for an item whose copies are all in place", async function () {
       const plan = await planFor(item("ok-multi"));
       assert.deepEqual(plan, { operations: [], notes: [] });
@@ -395,6 +408,45 @@ describe("sync", function () {
       assert.isFalse(await exists("From Root.pdf"));
       assert.equal(pathKey(attachmentOf(it).getFilePath() as string), pathKey(abs("Chemistry/From Root.pdf")));
       assert.deepEqual(await checkIssuesAbout(it, "From Root.pdf"), []);
+    });
+
+    it("undoes Attanger's move into a folder that already holds a copy (F3.5)", async function () {
+      const it = await makeItem("Sync Attanger Move", ["Physics/Optics", "Chemistry"], "Physics/Optics", "Moved.pdf");
+      const att = attachmentOf(it);
+      await reconcile(it, { fill: [att.key] });
+      const state = await AttachmentState.load();
+      state.set(att.key, { name: "Moved.pdf", folder: "Physics/Optics", size: 0, mtime: 0, md5: "" });
+      // What Attanger's "Move Attachment" does from the Chemistry view.
+      await IOUtils.copy(abs("Physics/Optics/Moved.pdf"), abs("Chemistry/Moved_1.pdf"));
+      await att.relinkAttachmentFile(abs("Chemistry/Moved_1.pdf"));
+      await IOUtils.remove(abs("Physics/Optics/Moved.pdf"));
+
+      const plan = await reconcile(it, undefined, state);
+      const ids = { itemKey: it.key, attachmentKey: att.key };
+      assert.deepEqual(plan.operations, [
+        { op: "copy", ...ids, from: "Chemistry/Moved.pdf", to: "Physics/Optics/Moved.pdf" },
+        { op: "relink", ...ids, to: "Chemistry/Moved.pdf" },
+        { op: "delete", ...ids, path: "Chemistry/Moved_1.pdf", keep: "Chemistry/Moved.pdf" },
+      ]);
+      pointsAt(it, "Chemistry/Moved.pdf");
+      assert.isFalse(await exists("Chemistry/Moved_1.pdf"));
+      assert.deepEqual(await checkIssuesAbout(it, "Moved.pdf"), []);
+    });
+
+    it("restores the copies a plain move of Zotero's file left missing (F3.5)", async function () {
+      const it = await makeItem("Sync Plain Move", ["Physics/Optics", "Physics/Plasma"], "Physics/Optics", "Plain Move.pdf");
+      const att = attachmentOf(it);
+      const state = await AttachmentState.load();
+      state.set(att.key, { name: "Plain Move.pdf", folder: "Physics/Optics", size: 0, mtime: 0, md5: "" });
+      // Moved in Zotero to the other collection's folder, which had no copy.
+      await IOUtils.move(abs("Physics/Optics/Plain Move.pdf"), abs("Physics/Plasma/Plain Move.pdf"));
+      await att.relinkAttachmentFile(abs("Physics/Plasma/Plain Move.pdf"));
+
+      const plan = await reconcile(it, undefined, state);
+      assert.deepEqual(plan.operations, [
+        { op: "copy", itemKey: it.key, attachmentKey: att.key, from: "Physics/Plasma/Plain Move.pdf", to: "Physics/Optics/Plain Move.pdf" },
+      ]);
+      assert.deepEqual(await checkIssuesAbout(it, "Plain Move.pdf"), []);
     });
 
     it("copies under the previous name follow a rename (F3.5)", async function () {
