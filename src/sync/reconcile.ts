@@ -1,7 +1,7 @@
 import { linked } from "../check/checks";
 import { Hasher } from "../check/hash";
 import { baseOf, dirOf, pathKey, relativeTo } from "../check/paths";
-import { takeSnapshot } from "../check/snapshot";
+import { readTrash, takeSnapshot, type EntryInfo } from "../check/snapshot";
 import { log } from "../utils/log";
 import { isDryRun } from "../utils/prefs";
 import { purgeOps } from "./changes";
@@ -9,6 +9,7 @@ import { writableRoot } from "./guard";
 import { execute } from "./ops";
 import { planEntry } from "./plan";
 import type { AttachmentState } from "./state";
+import { planRestore, planTrash, purgeEmptyTrashOps, purgeErasedOps } from "./trash";
 import type { Intent, OpResult, PlanNote } from "./types";
 
 export interface Reconciled {
@@ -25,35 +26,86 @@ export interface Reconciled {
 export async function reconcile(requests: Map<string, Intent>, state: AttachmentState): Promise<Reconciled[]> {
   const root = writableRoot();
   const dryRun = isDryRun();
-  const snapshot = await takeSnapshot(root);
+  let snapshot = await takeSnapshot(root);
   const hasher = new Hasher();
   const entries = new Map(snapshot.entries.map((e) => [e.key, e]));
   const done: Reconciled[] = [];
+  // Restored items get their missing copies in a second round, once their files are back.
+  const restored = new Map<string, Reconciled>();
   for (const [itemKey, intent] of requests) {
     const entry = entries.get(itemKey);
     if (!entry) {
       // Erased in the meantime.
       continue;
     }
-    const plan = await planEntry(snapshot, entry, hasher, { intent, state });
+    const plan = intent.trash
+      ? planTrash(snapshot, entry)
+      : intent.restore
+        ? planRestore(snapshot, entry)
+        : await planEntry(snapshot, entry, hasher, { intent, state });
     const results = await execute(plan.operations, { dryRun });
-    for (const note of plan.notes) {
-      log(`sync ${itemKey}: ${note.kind}${note.path ? ` ${note.path}` : ""}`);
+    logNotes(itemKey, plan.notes);
+    const reconciled = { itemKey, notes: plan.notes, results };
+    if (intent.restore && results.some((r) => r.status === "done")) {
+      restored.set(itemKey, reconciled);
+      continue;
     }
-    for (const a of linked(entry)) {
-      const mine = results.filter((r) => "attachmentKey" in r.operation && r.operation.attachmentKey === a.key);
-      const clean = mine.every((r) => r.status === "done" || r.status === "unchanged");
-      // The record keeps the previous name until the copies were really
-      // renamed: in dry-run mode, or after a skipped step, the old name is
-      // still needed to find them later (F3.5).
-      if ((clean && !dryRun) || (!state.get(a.key) && mine.length === 0)) {
-        await record(root, a.key, state);
+    if (!intent.trash) {
+      await recordAttachments(root, entry, results, dryRun, state);
+    }
+    done.push(reconciled);
+  }
+  if (restored.size) {
+    snapshot = await takeSnapshot(root);
+    const now = new Map(snapshot.entries.map((e) => [e.key, e]));
+    for (const [itemKey, first] of restored) {
+      const entry = now.get(itemKey);
+      if (!entry) {
+        continue;
       }
+      const fill = linked(entry).map((a) => a.key);
+      const plan = await planEntry(snapshot, entry, hasher, { intent: { fill }, state });
+      const results = await execute([...plan.operations, ...purgeEmptyTrashOps(snapshot, entry)], { dryRun });
+      logNotes(itemKey, plan.notes);
+      await recordAttachments(root, entry, [...first.results, ...results], dryRun, state);
+      done.push({ itemKey, notes: [...first.notes, ...plan.notes], results: [...first.results, ...results] });
     }
-    done.push({ itemKey, notes: plan.notes, results });
   }
   await state.save();
   return done;
+}
+
+/** Delete the plugin trash folders of items or attachments Zotero erased (§F4). */
+export async function purgeErased(keys: string[]): Promise<OpResult[]> {
+  const root = writableRoot();
+  const trash = await readTrash(root);
+  const ops = purgeErasedOps({ trash }, keys);
+  return ops.length ? execute(ops) : [];
+}
+
+function logNotes(itemKey: string, notes: PlanNote[]): void {
+  for (const note of notes) {
+    log(`sync ${itemKey}: ${note.kind}${note.path ? ` ${note.path}` : ""}`);
+  }
+}
+
+async function recordAttachments(
+  root: string,
+  entry: EntryInfo,
+  results: OpResult[],
+  dryRun: boolean,
+  state: AttachmentState,
+): Promise<void> {
+  for (const a of linked(entry)) {
+    const mine = results.filter((r) => "attachmentKey" in r.operation && r.operation.attachmentKey === a.key);
+    const clean = mine.every((r) => r.status === "done" || r.status === "unchanged");
+    // The record keeps the previous name until the copies were really
+    // renamed: in dry-run mode, or after a skipped step, the old name is
+    // still needed to find them later (F3.5).
+    if ((clean && !dryRun) || (!state.get(a.key) && mine.length === 0)) {
+      await record(root, a.key, state);
+    }
+  }
 }
 
 export interface ScanSummary {

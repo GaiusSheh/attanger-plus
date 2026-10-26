@@ -76,6 +76,39 @@ export interface ImportOp {
   to: string;
 }
 
+/**
+ * Move a file of a trashed item or attachment into the plugin trash (§F4):
+ * `path` in the root to `to` = `.attanger-plus-trash/<key>/<path>`.
+ */
+export interface TrashOp {
+  op: "trash";
+  itemKey: string;
+  attachmentKey: string;
+  path: string;
+  to: string;
+}
+
+/** Move a file of a restored item or attachment back out of the plugin trash (§F4). */
+export interface UntrashOp {
+  op: "untrash";
+  itemKey: string;
+  attachmentKey: string;
+  from: string;
+  to: string;
+}
+
+/**
+ * Delete a plugin trash folder `.attanger-plus-trash/<key>` (§F4): with
+ * everything in it once Zotero erased the item, or only if no file is left
+ * in it after a restore.
+ */
+export interface PurgeTrashOp {
+  op: "purge-trash";
+  itemKey: string;
+  path: string;
+  onlyIfEmpty: boolean;
+}
+
 export type Operation =
   | CopyOp
   | DeleteOp
@@ -84,7 +117,10 @@ export type Operation =
   | DiscardTempOp
   | ReplaceOp
   | PurgeReplacedOp
-  | ImportOp;
+  | ImportOp
+  | TrashOp
+  | UntrashOp
+  | PurgeTrashOp;
 
 /**
  * - done: carried out and verified
@@ -114,6 +150,10 @@ export interface Intent {
   removedFrom?: number[];
   /** Attachments just added (F3.4) or to restore (F3.7, F2), by key: all missing copies are made. */
   fill?: string[];
+  /** The item, or some of its attachments, just went to Zotero's trash (§F4): their files go to the plugin trash. */
+  trash?: boolean;
+  /** The item, or some of its attachments, just came back from Zotero's trash (§F4): their files come back. */
+  restore?: boolean;
 }
 
 /** Something the plan saw but deliberately leaves alone. */
@@ -127,7 +167,11 @@ export interface PlanNote {
     | "misplaced"
     | "copy-missing"
     | "copy-differs"
-    | "removed-copy-differs";
+    | "removed-copy-differs"
+    /** A file of a trashed attachment that a live item uses too (known_pits A8): left in place. */
+    | "in-use"
+    /** A file in the plugin trash that has no place among the restored item's collection folders. */
+    | "left-in-trash";
   path?: string;
 }
 

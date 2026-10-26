@@ -25,6 +25,30 @@ export function resolveInRoot(root: string, rel: string): string {
   return absoluteInRoot(root, rel);
 }
 
+/** Zotero item keys: 8 characters from Zotero's key alphabet. */
+const ITEM_KEY = /^[23456789ABCDEFGHIJKLMNPQRSTUVWXYZ]{8}$/;
+
+/** Plugin trash path of an item's or attachment's files (§F4): `.attanger-plus-trash/<key>/…`. */
+export function trashPath(key: string, rel: string): string {
+  return `${PLUGIN_TRASH}/${key}/${rel}`;
+}
+
+/**
+ * Absolute path of `rel`, which must lie inside the plugin trash folder of
+ * one item key: the folder itself (`depth` "folder") or something in it.
+ */
+export function resolveTrashPath(root: string, rel: string, depth: "folder" | "inside" = "inside"): string {
+  const parts = plainParts(rel);
+  const ok =
+    pathKey(parts[0]) === pathKey(PLUGIN_TRASH) &&
+    ITEM_KEY.test(parts[1] ?? "") &&
+    (depth === "folder" ? parts.length === 2 : parts.length >= 3);
+  if (!ok) {
+    throw new Skip("not-in-item-trash", rel);
+  }
+  return absoluteInRoot(root, rel);
+}
+
 /** Absolute path of `rel`, which must lie inside the plugin trash's replaced-versions area. */
 export function resolveReplacedPath(root: string, rel: string): string {
   const parts = plainParts(rel);

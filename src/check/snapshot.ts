@@ -181,55 +181,68 @@ function field(item: Zotero.Item, name: string): string {
   }
 }
 
+interface DiskWalk {
+  folders?: Map<string, string>;
+  tempFiles?: DiskFile[];
+  trash?: Map<string, DiskFile[]>;
+}
+
 async function readDisk(root: string) {
   const files = new Map<string, DiskFile>();
-  const folders = new Map<string, string>();
+  const found = { folders: new Map<string, string>(), trash: new Map<string, DiskFile[]>(), tempFiles: [] as DiskFile[] };
+  await walk(root, "", 0, (f) => files.set(pathKey(f.rel), f), false, found);
+  return { files, ...found };
+}
+
+/** The plugin trash alone (§F4), as in a snapshot: subfolder name ("" for loose files) -> its files. */
+export async function readTrash(root: string): Promise<Map<string, DiskFile[]>> {
   const trash = new Map<string, DiskFile[]>();
-  const tempFiles: DiskFile[] = [];
+  const abs = PathUtils.join(root, PLUGIN_TRASH);
+  if (await IOUtils.exists(abs)) {
+    await walkTrash(abs, trash);
+  }
+  return trash;
+}
 
-  async function walk(abs: string, rel: string, depth: number, onFile: (f: DiskFile) => void, inTrash: boolean) {
-    if (depth > MAX_DEPTH) {
-      throw new Error(`Folder nesting deeper than ${MAX_DEPTH} levels (link loop?): ${abs}`);
-    }
-    for (const child of await IOUtils.getChildren(abs)) {
-      const name = PathUtils.filename(child);
-      const childRel = joinRel(rel, name);
-      const info = await IOUtils.stat(child);
-      if (info.type === "directory") {
-        if (!inTrash && depth === 0 && name === PLUGIN_TRASH) {
-          await walkTrash(child);
-          continue;
-        }
-        if (!inTrash) {
-          folders.set(pathKey(childRel), childRel);
-        }
-        await walk(child, childRel, depth + 1, onFile, inTrash);
-      } else if (info.type === "regular" && !inTrash && name.endsWith(TEMP_SUFFIX)) {
-        tempFiles.push({ rel: childRel, abs: child, size: info.size ?? 0, mtime: info.lastModified ?? 0 });
-      } else if (info.type === "regular" && !isIgnoredFile(name)) {
-        onFile({ rel: childRel, abs: child, size: info.size ?? 0, mtime: info.lastModified ?? 0 });
+async function walk(abs: string, rel: string, depth: number, onFile: (f: DiskFile) => void, inTrash: boolean, found: DiskWalk) {
+  if (depth > MAX_DEPTH) {
+    throw new Error(`Folder nesting deeper than ${MAX_DEPTH} levels (link loop?): ${abs}`);
+  }
+  for (const child of await IOUtils.getChildren(abs)) {
+    const name = PathUtils.filename(child);
+    const childRel = joinRel(rel, name);
+    const info = await IOUtils.stat(child);
+    if (info.type === "directory") {
+      if (!inTrash && depth === 0 && name === PLUGIN_TRASH) {
+        await walkTrash(child, found.trash!);
+        continue;
       }
+      if (!inTrash) {
+        found.folders?.set(pathKey(childRel), childRel);
+      }
+      await walk(child, childRel, depth + 1, onFile, inTrash, found);
+    } else if (info.type === "regular" && !inTrash && name.endsWith(TEMP_SUFFIX)) {
+      found.tempFiles?.push({ rel: childRel, abs: child, size: info.size ?? 0, mtime: info.lastModified ?? 0 });
+    } else if (info.type === "regular" && !isIgnoredFile(name)) {
+      onFile({ rel: childRel, abs: child, size: info.size ?? 0, mtime: info.lastModified ?? 0 });
     }
   }
+}
 
-  async function walkTrash(trashAbs: string) {
-    for (const child of await IOUtils.getChildren(trashAbs)) {
-      const name = PathUtils.filename(child);
-      const info = await IOUtils.stat(child);
-      const bucket = info.type === "directory" ? name : "";
-      const list = trash.get(bucket) ?? [];
-      trash.set(bucket, list);
-      const rel = joinRel(PLUGIN_TRASH, name);
-      if (info.type === "directory") {
-        await walk(child, rel, 1, (f) => list.push(f), true);
-      } else if (info.type === "regular" && !isIgnoredFile(name)) {
-        list.push({ rel, abs: child, size: info.size ?? 0, mtime: info.lastModified ?? 0 });
-      }
+async function walkTrash(trashAbs: string, trash: Map<string, DiskFile[]>) {
+  for (const child of await IOUtils.getChildren(trashAbs)) {
+    const name = PathUtils.filename(child);
+    const info = await IOUtils.stat(child);
+    const bucket = info.type === "directory" ? name : "";
+    const list = trash.get(bucket) ?? [];
+    trash.set(bucket, list);
+    const rel = joinRel(PLUGIN_TRASH, name);
+    if (info.type === "directory") {
+      await walk(child, rel, 1, (f) => list.push(f), true, {});
+    } else if (info.type === "regular" && !isIgnoredFile(name)) {
+      list.push({ rel, abs: child, size: info.size ?? 0, mtime: info.lastModified ?? 0 });
     }
   }
-
-  await walk(root, "", 0, (f) => files.set(pathKey(f.rel), f), false);
-  return { files, folders, trash, tempFiles };
 }
 
 function isIgnoredFile(name: string): boolean {

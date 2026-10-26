@@ -121,11 +121,12 @@ describe("sync events", function () {
     assert.isTrue(await exists("Physics/Parent Direct.pdf"));
   });
 
-  it("leaves the files of a trashed item alone (F4 is Phase 3)", async function () {
-    await Zotero.Items.trashTx([item("ok-suffix").id]);
+  it("moves the files of a trashed item into the plugin trash (F4, see trash.spec.ts)", async function () {
+    const it = item("ok-suffix");
+    await Zotero.Items.trashTx([it.id]);
     await sync().flush();
-    assert.isTrue(await exists("Chemistry/Clean Item With Arxiv Version.pdf"));
-    assert.isTrue(await exists("Chemistry/Clean Item With Arxiv Version - arxiv.pdf"));
+    assert.isFalse(await exists("Chemistry/Clean Item With Arxiv Version.pdf"));
+    assert.isTrue(await exists(`.attanger-plus-trash/${it.key}/Chemistry/Clean Item With Arxiv Version - arxiv.pdf`));
   });
 
   it("only logs what it would do in dry-run mode", async function () {

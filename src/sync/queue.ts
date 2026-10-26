@@ -3,7 +3,7 @@ import { getPref } from "../utils/prefs";
 import { findingID, findingsOf, type Finding } from "./changes";
 import { writableRoot } from "./guard";
 import { execute } from "./ops";
-import { reconcile, recordSynced, scanAtStartup, type Reconciled, type ScanSummary } from "./reconcile";
+import { purgeErased, reconcile, recordSynced, scanAtStartup, type Reconciled, type ScanSummary } from "./reconcile";
 import { AttachmentState } from "./state";
 import type { Intent, Operation, OpResult } from "./types";
 
@@ -22,6 +22,9 @@ import type { Intent, Operation, OpResult } from "./types";
  * startup scan, when an attachment is opened, and on request (the check
  * report); what needs the user's decision goes to `onFindings`.
  *
+ * Items going into Zotero's trash, coming back, or being erased take their
+ * files along into, out of, or away with the plugin trash (§F4, trash.ts).
+ *
  * Changes that Zotero sync brings in from another device are that device's
  * to carry out; its files arrive through the user's file sync (Phase 3 plan,
  * 3-1). They only bring the attachment records up to date. Sync saves items
@@ -38,8 +41,8 @@ const ATTANGER_MAX_WAIT_MS = 30_000;
 const FRESH_STORED_MS = 60_000;
 /** The startup scan waits until Zotero has settled. */
 const STARTUP_SCAN_DELAY_MS = 10_000;
-/** How long a synced change of an item's collections waits for its collection-item events. */
-const SYNCED_COLLECTIONS_MS = 60_000;
+/** How long a synced change of an item waits for its collection-item and trash events. */
+const SYNCED_MS = 60_000;
 
 const ATTANGER_ID = "zoteroattanger@polygon.org";
 
@@ -47,6 +50,8 @@ interface Marked {
   addedTo: Set<number>;
   removedFrom: Set<number>;
   fill: Set<string>;
+  trash: boolean;
+  restore: boolean;
   /** When the item was first marked in this round. */
   since: number;
 }
@@ -55,8 +60,8 @@ const { setTimeout, clearTimeout } = ChromeUtils.importESModule("resource://gre/
 
 export class SyncQueue {
   private marked = new Map<string, Marked>();
-  /** Items whose collections sync just changed: item ID -> when; consumed by their collection-item events. */
-  private syncedCollections = new Map<number, number>();
+  /** Items sync just changed: item ID -> when; read by their collection-item and trash events. */
+  private synced = new Map<number, number>();
   private timer?: number;
   private startupTimer?: number;
   private observerID?: string;
@@ -245,7 +250,7 @@ export class SyncQueue {
       if (!item || item.libraryID !== Zotero.Libraries.userLibraryID) {
         continue;
       }
-      if (this.takeSyncedCollections(itemID)) {
+      if (this.takeSynced(itemID)) {
         continue;
       }
       const m = this.mark(entryKey(item));
@@ -260,15 +265,36 @@ export class SyncQueue {
   }
 
   private onItem(event: string, ids: (string | number)[], extraData: Record<string, unknown>): void {
-    if (event === "trash" || event === "delete") {
-      // Zotero's trash is Phase 3 (F4); erased items need nothing. Attanger's
-      // deletion of a converted stored attachment lands here too.
+    if (event === "trash") {
+      // Into Zotero's trash: the files follow (§F4). Sync's trashing comes
+      // after its own marked modify event in the same commit.
       for (const id of ids) {
         const item = Zotero.Items.get(Number(id));
-        const key = item ? item.key : (extraData?.[id] as { key?: string } | undefined)?.key;
-        if (key) {
-          this.marked.delete(key);
+        if (item && item.libraryID === Zotero.Libraries.userLibraryID && !this.takeSynced(item.id)) {
+          this.mark(entryKey(item)).trash = true;
         }
+      }
+      return;
+    }
+    if (event === "delete") {
+      // Erased: its plugin trash folder goes (§F4). Erasing a never-trashed
+      // item (e.g. Attanger replacing a stored attachment) leaves no folder.
+      const erased: string[] = [];
+      for (const id of ids) {
+        const data = extraData?.[id] as { key?: string; libraryID?: number; skipDeleteLog?: boolean } | undefined;
+        if (!data?.key || data.libraryID !== Zotero.Libraries.userLibraryID) {
+          continue;
+        }
+        this.marked.delete(data.key);
+        // Deletions applied by sync carry skipDeleteLog: the other device purged its folder.
+        if (!data.skipDeleteLog) {
+          erased.push(data.key);
+        }
+      }
+      if (erased.length) {
+        this.enqueue(async () => {
+          await purgeErased(erased);
+        }).catch(() => {});
       }
       return;
     }
@@ -281,20 +307,21 @@ export class SyncQueue {
       if (!item || item.libraryID !== Zotero.Libraries.userLibraryID) {
         continue;
       }
-      const data = extraData?.[id] as { skipRenameFile?: boolean; changed?: { collections?: unknown } } | undefined;
+      const data = extraData?.[id] as { skipRenameFile?: boolean; changed?: { deleted?: boolean } } | undefined;
       if (data?.skipRenameFile) {
-        // A new item, or one whose collections changed: its collection-item
-        // events follow in the same commit.
-        if (item.isTopLevelItem() && (event === "add" || data.changed?.collections !== undefined)) {
-          this.syncedCollections.set(item.id, Date.now());
-        }
+        // Its collection-item and trash events follow in the same commit.
+        this.synced.set(item.id, Date.now());
         if (item.isAttachment()) {
           synced.push(item.key);
         }
         continue;
       }
-      // A change made here; its collection-item events (if any) are ours.
-      this.syncedCollections.delete(item.id);
+      // A change made here; its collection-item and trash events are ours.
+      this.synced.delete(item.id);
+      // `changed` holds the values from before: out of Zotero's trash (§F4).
+      if (data?.changed?.deleted === true && !item.deleted) {
+        this.mark(entryKey(item)).restore = true;
+      }
       // Regular items join collections through collection-item events.
       if (!item.isAttachment()) {
         continue;
@@ -310,19 +337,19 @@ export class SyncQueue {
   }
 
   /**
-   * Whether sync just changed this item's collections. Kept for all of the
-   * commit's collection-item events (adds and removes come in separate
+   * Whether sync just changed this item. Kept for all of the commit's
+   * collection-item and trash events (adds and removes come in separate
    * calls); a change made here clears it, as it comes with an item event
    * of its own first.
    */
-  private takeSyncedCollections(itemID: number): boolean {
+  private takeSynced(itemID: number): boolean {
     const now = Date.now();
-    for (const [id, at] of this.syncedCollections) {
-      if (now - at > SYNCED_COLLECTIONS_MS) {
-        this.syncedCollections.delete(id);
+    for (const [id, at] of this.synced) {
+      if (now - at > SYNCED_MS) {
+        this.synced.delete(id);
       }
     }
-    return this.syncedCollections.has(itemID);
+    return this.synced.has(itemID);
   }
 
   /** Synced attachments: their records follow Zotero, their files are left to the device that changed them. */
@@ -353,7 +380,7 @@ export class SyncQueue {
   private mark(key: string): Marked {
     let m = this.marked.get(key);
     if (!m) {
-      m = { addedTo: new Set(), removedFrom: new Set(), fill: new Set(), since: Date.now() };
+      m = { addedTo: new Set(), removedFrom: new Set(), fill: new Set(), trash: false, restore: false, since: Date.now() };
       this.marked.set(key, m);
     }
     return m;
@@ -381,7 +408,13 @@ export class SyncQueue {
       if (waitForAttanger && now - m.since < ATTANGER_MAX_WAIT_MS && hasFreshStoredFile(key)) {
         continue;
       }
-      ready.set(key, { addedTo: [...m.addedTo], removedFrom: [...m.removedFrom], fill: [...m.fill] });
+      ready.set(key, {
+        addedTo: [...m.addedTo],
+        removedFrom: [...m.removedFrom],
+        fill: [...m.fill],
+        trash: m.trash,
+        restore: m.restore,
+      });
       this.marked.delete(key);
     }
     if (ready.size) {
