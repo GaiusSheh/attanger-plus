@@ -38,11 +38,11 @@ function activeEntries(s: Pick<Snapshot, "entries">): EntryInfo[] {
   return s.entries.filter((e) => !e.deleted);
 }
 
-function collectionsOf(s: Pick<Snapshot, "collections">, e: EntryInfo): CollectionInfo[] {
+export function collectionsOf(s: Pick<Snapshot, "collections">, e: EntryInfo): CollectionInfo[] {
   return e.collectionIDs.map((id) => s.collections.get(id)).filter((c): c is CollectionInfo => !!c);
 }
 
-function linked(e: EntryInfo): AttachmentInfo[] {
+export function linked(e: EntryInfo): AttachmentInfo[] {
   return e.attachments.filter((a) => a.linkMode === "linked" && !a.deleted);
 }
 
@@ -190,7 +190,7 @@ async function checkLinkedFiles(s: Snapshot, hasher: Hasher): Promise<Issue[]> {
 }
 
 /** One collection per folder (two collections can map to the same folder). */
-function uniqueFolders(cols: CollectionInfo[]): CollectionInfo[] {
+export function uniqueFolders(cols: CollectionInfo[]): CollectionInfo[] {
   const seen = new Set<string>();
   return cols.filter((c) => !seen.has(c.folderKey) && !!seen.add(c.folderKey));
 }

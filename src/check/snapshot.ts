@@ -3,6 +3,12 @@ import { collectionFolder, joinRel, pathKey, relativeTo } from "./paths";
 /** Plugin trash folder directly under the files root (requirements §F4). */
 export const PLUGIN_TRASH = ".attanger-plus-trash";
 
+/**
+ * Suffix of the temporary file a copy is written to before it gets its real
+ * name (src/sync/ops.ts). One left behind by a crash is not an orphan.
+ */
+export const TEMP_SUFFIX = ".attanger-plus-tmp";
+
 /** System files that are never reported. Compared in lower case. */
 const IGNORED_FILES = new Set(["desktop.ini", "thumbs.db", ".ds_store"]);
 
@@ -216,5 +222,5 @@ async function readDisk(root: string) {
 }
 
 function isIgnoredFile(name: string): boolean {
-  return IGNORED_FILES.has(name.toLowerCase()) || name.startsWith("~$");
+  return IGNORED_FILES.has(name.toLowerCase()) || name.startsWith("~$") || name.endsWith(TEMP_SUFFIX);
 }
