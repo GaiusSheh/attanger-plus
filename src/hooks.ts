@@ -19,7 +19,8 @@ async function onStartup(): Promise<void> {
   // Windows that were already open when the plugin was (re)installed never
   // receive onMainWindowLoad.
   await Promise.all(Zotero.getMainWindows().map((win) => onMainWindowLoad(win)));
-  registerMenus();
+  // Menus are not worth failing the start for: copy maintenance must run.
+  await safely("startup: menus", registerMenus);
   addon().sync.onFindings = (findings) => {
     showChanges(findings).catch((e) => Zotero.logError(e));
   };
@@ -43,18 +44,35 @@ async function onMainWindowUnload(win: Window): Promise<void> {
   win.document.querySelector(`link[href="${MAIN_WINDOW_FTL}"]`)?.remove();
 }
 
+/**
+ * Every step on its own: one that fails must not keep the instance attached,
+ * or it would linger after an upgrade or uninstall (known_pits A11).
+ */
 async function onShutdown(): Promise<void> {
-  await addon().sync.stop();
-  unregisterMenus();
-  closeReports();
-  closeRemoveDialogs();
-  closeChangesWindows();
+  await safely("shutdown: copy maintenance", () => addon().sync.stop());
+  await safely("shutdown: menus", unregisterMenus);
+  await safely("shutdown: windows", () => {
+    closeReports();
+    closeRemoveDialogs();
+    closeChangesWindows();
+  });
   for (const win of Zotero.getMainWindows()) {
-    await onMainWindowUnload(win);
+    await safely("shutdown: main window", () => onMainWindowUnload(win));
   }
-  addon().data.initialized = false;
+  if (Zotero.AttangerPlus) {
+    Zotero.AttangerPlus.data.initialized = false;
+  }
   delete Zotero.AttangerPlus;
   log("shutdown");
+}
+
+async function safely(step: string, fn: () => unknown): Promise<void> {
+  try {
+    await fn();
+  } catch (e) {
+    Zotero.logError(e as Error);
+    log(`${step} failed: ${String(e)}`);
+  }
 }
 
 function addon() {

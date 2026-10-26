@@ -75,13 +75,40 @@ export function registerMenus(): void {
   });
 }
 
+/**
+ * Zotero usually drops a plugin's menus itself when the plugin shuts down;
+ * removing them again then only logs a warning and returns false.
+ */
 export function unregisterMenus(): void {
-  Zotero.MenuManager.unregisterMenu(TOOLS_MENU_ID);
-  Zotero.MenuManager.unregisterMenu(ITEM_MENU_ID);
+  for (const menuID of [TOOLS_MENU_ID, ITEM_MENU_ID]) {
+    Zotero.MenuManager.unregisterMenu(registered.get(menuID) ?? menuKey(menuID));
+  }
+  registered.clear();
 }
 
+/** Keys MenuManager returned for our menus, which is what unregistering takes. */
+const registered = new Map<string, string>();
+
+/**
+ * A registration left by an earlier instance whose cleanup did not run
+ * (e.g. during an upgrade) makes the new one fail as a duplicate: remove it
+ * and try once more. A menu that still cannot be registered is logged, not
+ * thrown: the rest of the plugin must start anyway (known_pits A11).
+ */
 function register(options: Parameters<typeof Zotero.MenuManager.registerMenu>[0]): void {
-  if (!Zotero.MenuManager.registerMenu(options)) {
-    throw new Error(`Could not register menu ${options.menuID}`);
+  let key = Zotero.MenuManager.registerMenu(options);
+  if (!key) {
+    Zotero.MenuManager.unregisterMenu(menuKey(options.menuID));
+    key = Zotero.MenuManager.registerMenu(options);
   }
+  if (!key) {
+    Zotero.logError(new Error(`Attanger Plus could not register menu ${options.menuID}`));
+    return;
+  }
+  registered.set(options.menuID, key);
+}
+
+/** How MenuManager files a menu: CSS-escaped "<pluginID>-<menuID>" (Zotero's pluginAPIBase.mjs). */
+function menuKey(menuID: string): string {
+  return Zotero.getMainWindow().CSS.escape(`${config.addonID}-${menuID}`);
 }
