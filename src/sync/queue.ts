@@ -1,7 +1,11 @@
 import { log } from "../utils/log";
+import { getPref } from "../utils/prefs";
+import { findingID, findingsOf, type Finding } from "./changes";
+import { writableRoot } from "./guard";
+import { execute } from "./ops";
 import { reconcile, scanAtStartup, type Reconciled, type ScanSummary } from "./reconcile";
 import { AttachmentState } from "./state";
-import type { Intent } from "./types";
+import type { Intent, Operation, OpResult } from "./types";
 
 /*
  * Zotero's Notifier events only mark items and what the user did to them
@@ -13,6 +17,10 @@ import type { Intent } from "./types";
  * Attanger handles new attachments about 1–1.5 s after they appear, turning
  * a stored one into a new linked attachment (known_pits A3); items that
  * still have such a fresh stored attachment wait for it, up to a limit.
+ *
+ * Changes made in the file manager (§F3.6–F3.8) are looked for at the
+ * startup scan, when an attachment is opened, and on request (the check
+ * report); what needs the user's decision goes to `onFindings`.
  */
 
 /** Quiet time before marked items are reconciled. */
@@ -46,15 +54,41 @@ export class SyncQueue {
   private state?: AttachmentState;
   /** All reconciling and scanning runs one at a time along this chain. */
   private chain: Promise<void> = Promise.resolve();
+  /** Receives file-manager changes that need the user's decision (set by the UI). */
+  onFindings?: (findings: Finding[]) => void;
 
   start(): void {
     this.stopped = false;
     this.observerID = Zotero.Notifier.registerObserver(
       { notify: (event: string, type: string, ids: (string | number)[], extraData: Record<string, unknown>) => this.onNotify(event, type, ids, extraData) },
-      ["item", "collection-item"],
+      ["item", "collection-item", "file"],
       "attanger-plus",
     );
     this.scanLater();
+  }
+
+  /**
+   * Look for changes made in the file manager to these items (all when
+   * omitted); does what loses nothing, returns the rest.
+   */
+  inspect(itemKeys?: string[]): Promise<Finding[]> {
+    return this.enqueue(() => this.inspectNow(itemKeys));
+  }
+
+  /** Carry out operations in turn with all other work (e.g. the user's choices in the changes window). */
+  run(operations: Operation[]): Promise<OpResult[]> {
+    return this.enqueue(() => execute(operations));
+  }
+
+  /** Ignore findings (no automatic window), or stop ignoring them. */
+  setIgnored(findingIDs: string[], ignored: boolean): Promise<void> {
+    return this.enqueue(async () => {
+      const state = await this.loadState();
+      for (const id of findingIDs) {
+        state.setIgnored(id, ignored);
+      }
+      await state.save();
+    });
   }
 
   async stop(): Promise<void> {
@@ -110,9 +144,53 @@ export class SyncQueue {
         return;
       }
       const summary: ScanSummary = await scanAtStartup(await this.loadState());
-      const removed = summary.tempFiles.filter((r) => r.status === "done").length;
-      log(`sync startup scan: ${removed}/${summary.tempFiles.length} temporary files removed, ${summary.recorded} attachments recorded, ${summary.forgotten} forgotten`);
+      const done = (results: OpResult[]) => results.filter((r) => r.status === "done").length;
+      log(
+        `sync startup scan: ${done(summary.tempFiles)}/${summary.tempFiles.length} temporary files removed, ` +
+          `${done(summary.purged)}/${summary.purged.length} old replaced versions purged, ` +
+          `${summary.recorded} attachments recorded, ${summary.forgotten} forgotten`,
+      );
+      if (getPref("inspectOnStartup") !== false) {
+        this.report(await this.inspectNow());
+      }
     });
+  }
+
+  private async inspectNow(itemKeys?: string[]): Promise<Finding[]> {
+    const keys = itemKeys ?? (await allEntryKeys());
+    const state = await this.loadState();
+    const reconciled = await reconcile(new Map(keys.map((k) => [k, {}])), state);
+    const findings = await findingsOf(writableRoot(), reconciled);
+    const found = new Set(findings.map(findingID));
+    for (const f of findings) {
+      f.ignored = state.isIgnored(findingID(f));
+    }
+    // An ignored finding that is gone (file back, or dealt with) is forgotten.
+    const inspected = itemKeys ? attachmentKeysOf(itemKeys) : null;
+    let forgot = false;
+    for (const id of state.ignoredIDs()) {
+      const attachmentKey = id.split(":")[1];
+      if (!found.has(id) && (!inspected || inspected.has(attachmentKey))) {
+        state.setIgnored(id, false);
+        forgot = true;
+      }
+    }
+    if (forgot) {
+      await state.save();
+    }
+    return findings;
+  }
+
+  /** Automatic windows (startup, opening an attachment) leave out what the user ignored. */
+  private report(all: Finding[]): void {
+    const findings = all.filter((f) => !f.ignored);
+    if (findings.length && !this.stopped) {
+      try {
+        this.onFindings?.(findings);
+      } catch (e) {
+        log(`sync: showing findings failed: ${String(e)}`);
+      }
+    }
   }
 
   private scanLater(): void {
@@ -132,6 +210,8 @@ export class SyncQueue {
         this.onCollectionItem(event, ids);
       } else if (type === "item") {
         this.onItem(event, ids, extraData);
+      } else if (type === "file" && event === "open") {
+        this.onOpen(ids);
       }
       if (this.marked.size) {
         this.schedule();
@@ -189,6 +269,20 @@ export class SyncQueue {
       if (event === "add" && item.attachmentLinkMode === Zotero.Attachments.LINK_MODE_LINKED_FILE) {
         m.fill.add(item.key);
       }
+    }
+  }
+
+  /** An attachment was opened: look at its item now (known_pits A7: `file` `open`). */
+  private onOpen(ids: (string | number)[]): void {
+    const keys = new Set<string>();
+    for (const id of ids) {
+      const item = Zotero.Items.get(Number(id));
+      if (item && item.libraryID === Zotero.Libraries.userLibraryID) {
+        keys.add(entryKey(item));
+      }
+    }
+    if (keys.size) {
+      this.enqueue(async () => this.report(await this.inspectNow([...keys]))).catch(() => {});
     }
   }
 
@@ -266,6 +360,31 @@ export class SyncQueue {
     this.timer = undefined;
     this.startupTimer = undefined;
   }
+}
+
+/** Keys of all top-level items and standalone attachments outside the trash. */
+async function allEntryKeys(): Promise<string[]> {
+  const items = await Zotero.Items.getAll(Zotero.Libraries.userLibraryID, true, false);
+  return items.filter((i) => i.isRegularItem() || i.isAttachment()).map((i) => i.key);
+}
+
+/** Keys of the attachments of these entries (a standalone attachment is its own). */
+function attachmentKeysOf(entryKeys: string[]): Set<string> {
+  const keys = new Set<string>();
+  for (const key of entryKeys) {
+    const item = Zotero.Items.getByLibraryAndKey(Zotero.Libraries.userLibraryID, key);
+    if (!item) {
+      continue;
+    }
+    if (item.isAttachment()) {
+      keys.add(item.key);
+    } else {
+      for (const attachment of Zotero.Items.get(item.getAttachments()) as Zotero.Item[]) {
+        keys.add(attachment.key);
+      }
+    }
+  }
+  return keys;
 }
 
 /** Key of the entry an item belongs to: its parent item's, or its own. */

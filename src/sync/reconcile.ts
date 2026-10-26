@@ -4,6 +4,7 @@ import { baseOf, dirOf, pathKey, relativeTo } from "../check/paths";
 import { takeSnapshot } from "../check/snapshot";
 import { log } from "../utils/log";
 import { isDryRun } from "../utils/prefs";
+import { purgeOps } from "./changes";
 import { writableRoot } from "./guard";
 import { execute } from "./ops";
 import { planEntry } from "./plan";
@@ -57,12 +58,14 @@ export async function reconcile(requests: Map<string, Intent>, state: Attachment
 
 export interface ScanSummary {
   tempFiles: OpResult[];
+  purged: OpResult[];
   recorded: number;
   forgotten: number;
 }
 
 /**
- * At startup: remove temporary copies an interrupted run left behind, record
+ * At startup: remove temporary copies an interrupted run left behind, delete
+ * replaced versions older than Zotero's trash period (§F4), record
  * attachments the state does not know yet, and forget erased ones. Records
  * already there are kept, so renames made while the plugin was not running
  * are still found.
@@ -71,6 +74,7 @@ export async function scanAtStartup(state: AttachmentState): Promise<ScanSummary
   const root = writableRoot();
   const snapshot = await takeSnapshot(root);
   const tempFiles = await execute(snapshot.tempFiles.map((f) => ({ op: "discard-temp" as const, path: f.rel })));
+  const purged = await execute(await purgeOps(root));
   const live = new Set<string>();
   let recorded = 0;
   for (const e of snapshot.entries) {
@@ -94,7 +98,7 @@ export async function scanAtStartup(state: AttachmentState): Promise<ScanSummary
     }
   }
   await state.save();
-  return { tempFiles, recorded, forgotten };
+  return { tempFiles, purged, recorded, forgotten };
 }
 
 /** Current name and folder of the copy Zotero points at; the MD5 is kept while size and mtime match. */

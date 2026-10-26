@@ -22,6 +22,12 @@ export interface AttachmentRecord {
 interface StateFile {
   version: 1;
   attachments: Record<string, AttachmentRecord>;
+  /**
+   * Findings the user chose to ignore (§F3.6–F3.8): no automatic window for
+   * them; they are still detected and listed on request. Absent in files
+   * written before 2-5.
+   */
+  ignored?: string[];
 }
 
 export function stateFile(): string {
@@ -53,6 +59,19 @@ export class AttachmentState {
 
   get(attachmentKey: string): AttachmentRecord | undefined {
     return this.data.attachments[attachmentKey];
+  }
+
+  isIgnored(findingID: string): boolean {
+    return (this.data.ignored ?? []).includes(findingID);
+  }
+
+  ignoredIDs(): string[] {
+    return [...(this.data.ignored ?? [])];
+  }
+
+  setIgnored(findingID: string, ignored: boolean): void {
+    const rest = (this.data.ignored ?? []).filter((id) => id !== findingID);
+    this.data.ignored = ignored ? [...rest, findingID] : rest;
   }
 
   set(attachmentKey: string, record: AttachmentRecord): void {

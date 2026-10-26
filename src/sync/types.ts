@@ -44,7 +44,47 @@ export interface DiscardTempOp {
   path: string;
 }
 
-export type Operation = CopyOp | DeleteOp | RenameOp | RelinkOp | DiscardTempOp;
+/**
+ * Replace the copy `to` with the content of `from`, on the user's explicit
+ * choice (§F3.6); the old `to` is first moved to `backup`, inside the plugin
+ * trash's replaced-versions area.
+ */
+export interface ReplaceOp {
+  op: "replace";
+  itemKey: string;
+  attachmentKey: string;
+  from: string;
+  to: string;
+  backup: string;
+}
+
+/** Delete one dated folder of replaced versions once it is old enough (§F4). */
+export interface PurgeReplacedOp {
+  op: "purge-replaced";
+  path: string;
+}
+
+/**
+ * Copy a file from anywhere (absolute `from`, which stays) to `to` inside the
+ * root, on the user's explicit choice (§F3.8 relocate).
+ */
+export interface ImportOp {
+  op: "import";
+  itemKey: string;
+  attachmentKey: string;
+  from: string;
+  to: string;
+}
+
+export type Operation =
+  | CopyOp
+  | DeleteOp
+  | RenameOp
+  | RelinkOp
+  | DiscardTempOp
+  | ReplaceOp
+  | PurgeReplacedOp
+  | ImportOp;
 
 /**
  * - done: carried out and verified

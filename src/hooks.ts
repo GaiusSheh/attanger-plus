@@ -1,6 +1,7 @@
 import { config, version } from "../package.json";
 import { l10nID } from "./ui/l10n";
 import { registerMenus, unregisterMenus } from "./ui/menu";
+import { closeChangesWindows, showChanges } from "./ui/changes";
 import { closeRemoveDialogs } from "./ui/remove";
 import { closeReports } from "./ui/report";
 import { log } from "./utils/log";
@@ -19,6 +20,9 @@ async function onStartup(): Promise<void> {
   // receive onMainWindowLoad.
   await Promise.all(Zotero.getMainWindows().map((win) => onMainWindowLoad(win)));
   registerMenus();
+  addon().sync.onFindings = (findings) => {
+    showChanges(findings).catch((e) => Zotero.logError(e));
+  };
   addon().sync.start();
 
   addon().data.initialized = true;
@@ -44,6 +48,7 @@ async function onShutdown(): Promise<void> {
   unregisterMenus();
   closeReports();
   closeRemoveDialogs();
+  closeChangesWindows();
   for (const win of Zotero.getMainWindows()) {
     await onMainWindowUnload(win);
   }

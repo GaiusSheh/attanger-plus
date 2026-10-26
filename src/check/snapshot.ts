@@ -4,6 +4,12 @@ import { collectionFolder, joinRel, pathKey, relativeTo } from "./paths";
 export const PLUGIN_TRASH = ".attanger-plus-trash";
 
 /**
+ * Subfolder of the plugin trash for old versions replaced when copies are
+ * synced (§F3.6); never an item key, so C14 leaves it alone.
+ */
+export const REPLACED_BUCKET = "_replaced";
+
+/**
  * Suffix of the temporary file a copy is written to before it gets its real
  * name (src/sync/ops.ts). One left behind by a crash is not an orphan.
  */

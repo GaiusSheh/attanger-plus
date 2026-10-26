@@ -88,6 +88,9 @@ export default defineConfig({
       // The runner's data dir (.scaffold/test/data) is fixed by scaffold and
       // lies inside OneDrive; without this a modal warning blocks the run.
       "extensions.zotero.warnOnUnsafeDataDir": false,
+      // The test library's fixtures are file-manager changes on purpose; the
+      // startup scan must not act on them or open its window mid-run.
+      [`${prefsPrefix}.inspectOnStartup`]: false,
     },
     hooks: {
       // scaffold has no local source for chai and would otherwise download an

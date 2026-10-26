@@ -1,0 +1,80 @@
+:root {
+  color-scheme: light dark;
+}
+
+body {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  box-sizing: border-box;
+  margin: 0;
+  padding: 16px 20px;
+  font: message-box;
+  font-size: 13px;
+  background: Canvas;
+  color: CanvasText;
+}
+
+.intro {
+  margin: 0 0 8px;
+}
+
+#findings {
+  flex: 1;
+  overflow-y: auto;
+}
+
+h2 {
+  margin: 12px 0 4px;
+  font-size: 14px;
+}
+
+.finding {
+  padding: 6px 0 8px;
+  border-bottom: 1px solid color-mix(in srgb, CanvasText 15%, transparent);
+}
+
+.finding p {
+  margin: 0 0 4px;
+  overflow-wrap: anywhere;
+}
+
+.ignored-tag,
+.picked {
+  color: GrayText;
+}
+
+.picked {
+  margin: 4px 0 0;
+  overflow-wrap: anywhere;
+}
+
+.choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+}
+
+table {
+  margin-top: 4px;
+  border-collapse: collapse;
+}
+
+th,
+td {
+  padding: 2px 8px 2px 0;
+  text-align: left;
+  vertical-align: middle;
+}
+
+th {
+  font-weight: normal;
+  color: GrayText;
+}
+
+.actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 12px;
+}

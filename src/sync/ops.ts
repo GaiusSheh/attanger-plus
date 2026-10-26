@@ -2,14 +2,27 @@ import { Hasher } from "../check/hash";
 import { pathKey, relativeTo } from "../check/paths";
 import { TEMP_SUFFIX, type DiskFile } from "../check/snapshot";
 import { isDryRun } from "../utils/prefs";
-import { resolveInRoot, Skip, writableRoot } from "./guard";
+import { resolveInRoot, resolveReplacedPath, Skip, writableRoot } from "./guard";
 import { appendLog } from "./log";
-import type { CopyOp, DeleteOp, DiscardTempOp, Operation, OpResult, RelinkOp, RenameOp } from "./types";
+import type {
+  CopyOp,
+  DeleteOp,
+  DiscardTempOp,
+  ImportOp,
+  Operation,
+  OpResult,
+  PurgeReplacedOp,
+  RelinkOp,
+  RenameOp,
+  ReplaceOp,
+} from "./types";
 
 /*
  * Carry out planned operations one at a time. Each re-checks its
  * preconditions against the disk and the library as they are now (the plan
  * may be stale), never overwrites a file, verifies its result, and is logged.
+ * The one replacement (`replace`, on the user's explicit choice, §F3.6)
+ * first moves the old file into the plugin trash.
  */
 
 export interface ExecuteOptions {
@@ -45,20 +58,31 @@ function dryRunResult(root: string, operation: Operation): OpResult {
   for (const rel of pathsOf(operation)) {
     resolveInRoot(root, rel);
   }
+  if (operation.op === "replace") {
+    resolveReplacedPath(root, operation.backup);
+  } else if (operation.op === "purge-replaced") {
+    resolveReplacedPath(root, operation.path);
+  }
   return { operation, status: "dry-run" };
 }
 
+/** Paths that must lie in the root outside the plugin trash. */
 function pathsOf(operation: Operation): string[] {
   switch (operation.op) {
     case "copy":
     case "rename":
+    case "replace":
       return [operation.from, operation.to];
+    case "import":
+      return [operation.to];
     case "delete":
       return [operation.path, operation.keep];
     case "relink":
       return [operation.to];
     case "discard-temp":
       return [operation.path];
+    case "purge-replaced":
+      return [];
   }
 }
 
@@ -74,6 +98,118 @@ async function run(root: string, operation: Operation, hasher: Hasher): Promise<
       return relink(root, operation, hasher);
     case "discard-temp":
       return discardTemp(root, operation);
+    case "replace":
+      return replace(root, operation, hasher);
+    case "purge-replaced":
+      return purgeReplaced(root, operation);
+    case "import":
+      return importFile(root, operation, hasher);
+  }
+}
+
+/** A file the user picked, from anywhere, into the root; never over an existing file. */
+async function importFile(root: string, op: ImportOp, hasher: Hasher): Promise<OpResult> {
+  const to = resolveInRoot(root, op.to);
+  if (!PathUtils.isAbsolute(op.from)) {
+    throw new Skip("not-an-absolute-path", op.from);
+  }
+  const source = await fileAt(op.from);
+  if (!source) {
+    throw new Skip("source-missing", op.from);
+  }
+  if (await IOUtils.exists(to)) {
+    throw new Skip("target-exists", op.to);
+  }
+  await IOUtils.makeDirectory(PathUtils.parent(to)!, { createAncestors: true, ignoreExisting: true });
+  const tmp = to + TEMP_SUFFIX;
+  await removeFile(tmp);
+  try {
+    await IOUtils.copy(op.from, tmp, { noOverwrite: true });
+    const copied = await fileAt(tmp);
+    if (!copied || !(await hasher.same(source, copied))) {
+      throw new Error(`copy does not match its source: ${op.from} -> ${op.to}`);
+    }
+    await IOUtils.move(tmp, to, { noOverwrite: true });
+  } catch (e) {
+    await removeFile(tmp);
+    throw e;
+  }
+  return { operation: op, status: "done" };
+}
+
+/**
+ * Old `to` into the plugin trash first, then the content of `from` in its
+ * place through a temporary copy. A failure after the old file has moved
+ * puts it back.
+ */
+async function replace(root: string, op: ReplaceOp, hasher: Hasher): Promise<OpResult> {
+  const from = resolveInRoot(root, op.from);
+  const to = resolveInRoot(root, op.to);
+  const backup = resolveReplacedPath(root, op.backup);
+  if (pathKey(op.from) === pathKey(op.to)) {
+    throw new Skip("same-file", op.to);
+  }
+  const source = await fileAt(from);
+  if (!source) {
+    throw new Skip("source-missing", op.from);
+  }
+  const target = await fileAt(to);
+  if (!target) {
+    throw new Skip("target-missing", op.to);
+  }
+  if (await hasher.same(source, target)) {
+    return { operation: op, status: "unchanged", reason: "identical" };
+  }
+  if (await IOUtils.exists(backup)) {
+    throw new Skip("backup-exists", op.backup);
+  }
+
+  const tmp = to + TEMP_SUFFIX;
+  await removeFile(tmp);
+  try {
+    await IOUtils.copy(from, tmp, { noOverwrite: true });
+    const copied = await fileAt(tmp);
+    if (!copied || !(await hasher.same(source, copied))) {
+      throw new Error(`copy does not match its source: ${op.from} -> ${op.to}`);
+    }
+    await IOUtils.makeDirectory(PathUtils.parent(backup)!, { createAncestors: true, ignoreExisting: true });
+    await IOUtils.move(to, backup, { noOverwrite: true });
+  } catch (e) {
+    await removeFile(tmp);
+    throw e;
+  }
+  try {
+    await IOUtils.move(tmp, to, { noOverwrite: true });
+  } catch (e) {
+    await IOUtils.move(backup, to, { noOverwrite: true }).catch(() => {});
+    await removeFile(tmp);
+    throw e;
+  }
+  return { operation: op, status: "done" };
+}
+
+/** One dated folder of replaced versions, with everything in it. */
+async function purgeReplaced(root: string, op: PurgeReplacedOp): Promise<OpResult> {
+  const path = resolveReplacedPath(root, op.path);
+  if (!(await IOUtils.exists(path))) {
+    return { operation: op, status: "unchanged", reason: "already-absent" };
+  }
+  await clearReadOnlyTree(path);
+  await IOUtils.remove(path, { recursive: true });
+  return { operation: op, status: "done" };
+}
+
+/** OneDrive marks files and folders read-only (known_pits B1); removing a tree needs that cleared everywhere. */
+async function clearReadOnlyTree(abs: string): Promise<void> {
+  if (!Zotero.isWin) {
+    return;
+  }
+  await IOUtils.setWindowsAttributes(abs, { readOnly: false });
+  const info = await IOUtils.stat(abs);
+  if (info.type === "directory") {
+    for (const child of await IOUtils.getChildren(abs)) {
+      await clearReadOnlyTree(child);
+    }
   }
 }
 

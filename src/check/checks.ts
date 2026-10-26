@@ -2,7 +2,7 @@ import { templateBaseName } from "../utils/zotero";
 import type { Hasher } from "./hash";
 import { baseOf, dirOf, joinRel, pathKey } from "./paths";
 import type { AttachmentInfo, CollectionInfo, DiskFile, EntryInfo, Snapshot } from "./snapshot";
-import { PLUGIN_TRASH } from "./snapshot";
+import { PLUGIN_TRASH, REPLACED_BUCKET } from "./snapshot";
 import type { Issue } from "./types";
 
 /*
@@ -453,6 +453,9 @@ function checkTrash(s: Snapshot): Issue[] {
     }
   }
   for (const [name, files] of s.trash) {
+    if (name === REPLACED_BUCKET) {
+      continue;
+    }
     if (!name || !trashedKeys.has(name)) {
       issues.push({
         check: "C14",

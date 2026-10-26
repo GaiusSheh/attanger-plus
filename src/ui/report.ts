@@ -2,6 +2,7 @@ import type { FluentMessageId } from "../../typings/i10n";
 import { runCheck } from "../check";
 import { toAbsolute } from "../check/paths";
 import { CHECK_IDS, type CheckId, type CheckReport, type Issue } from "../check/types";
+import { showChanges } from "./changes";
 import { l10nID } from "./l10n";
 
 const REPORT_URL = "chrome://attangerplus/content/report.xhtml";
@@ -47,6 +48,9 @@ class ReportView {
   constructor(private readonly win: Window) {
     this.doc = win.document;
     this.element("rerun").addEventListener("click", () => void this.run());
+    this.element("changes").addEventListener("click", () => {
+      this.handleChanges().catch((e) => this.fail(e));
+    });
     this.element("export").addEventListener("click", () => {
       this.exportMarkdown().catch((e) => this.fail(e));
     });
@@ -141,6 +145,20 @@ class ReportView {
   }
 
   // ------------------------------------------------------------- export
+
+  /** Look for file-manager changes (§F3.6–F3.8) and open the window to decide on them. */
+  private async handleChanges(): Promise<void> {
+    const sync = Zotero.AttangerPlus?.sync;
+    if (!sync) {
+      throw new Error("Attanger Plus is not running");
+    }
+    const findings = await sync.inspect();
+    if (findings.length) {
+      await showChanges(findings);
+    } else {
+      Services.prompt.alert(this.win as unknown as mozIDOMWindowProxy, "Attanger Plus", await this.format("report-changes-none"));
+    }
+  }
 
   private async exportMarkdown(): Promise<void> {
     if (!this.report) {

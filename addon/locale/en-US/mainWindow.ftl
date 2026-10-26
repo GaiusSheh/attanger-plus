@@ -13,6 +13,13 @@ reveal-restore-prompt =
 reveal-restore-button = Restore from Another Copy
 reveal-restore-dry-run = Dry-run mode: nothing was restored; the operations were written to the operation log.
 reveal-restore-failed = Could not restore “{ $file }”; see the operation log for why.
+changes-dry-run = Dry-run mode: the file operations (restore, sync, locate) were not carried out but written to the operation log; changes in Zotero (removal from a collection, moving to the trash, ignoring) took effect.
+changes-done = Done: { $restored } copies restored, { $removed } removed from a collection, { $synced } copies synced, { $relocated } files located, { $trashed } moved to the trash, { $ignored } ignored.
+changes-failed =
+    { $count ->
+        [one] One step could not be completed; see the operation log for why.
+       *[other] { $count } steps could not be completed; see the operation log for why.
+    }
 menu-remove-current =
     .label = Remove from Current Collection
 menu-remove-all =
