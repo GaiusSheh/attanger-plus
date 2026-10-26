@@ -263,7 +263,34 @@ export interface TestLibrary {
 
 /** Wipe the dev/test library and its files root, then rebuild the fixtures. */
 export async function resetTestLibrary(): Promise<TestLibrary> {
-  const { dataDir, root } = testLibraryPaths();
+  const paths = testLibraryPaths();
+  return withAttangerPaused(() => buildTestLibrary(paths));
+}
+
+const ATTANGER_ID = "zoteroattanger@polygon.org";
+
+/**
+ * Attanger renames new attachments and turns stored ones into linked files
+ * (known_pits A3), which would undo fixtures such as the C6 stored file or
+ * the C12 names. It has no working on/off preference, so disable the plugin
+ * itself while the fixtures are built; its shutdown drops anything queued.
+ * The test runner's profile has no Attanger, so there this does nothing.
+ */
+async function withAttangerPaused<T>(fn: () => Promise<T>): Promise<T> {
+  const { AddonManager } = ChromeUtils.importESModule("resource://gre/modules/AddonManager.sys.mjs");
+  const attanger = await AddonManager.getAddonByID(ATTANGER_ID);
+  if (!attanger?.isActive) {
+    return fn();
+  }
+  await attanger.disable();
+  try {
+    return await fn();
+  } finally {
+    await attanger.enable();
+  }
+}
+
+async function buildTestLibrary({ dataDir, root }: { dataDir: string; root: string }): Promise<TestLibrary> {
   const libraryID = Zotero.Libraries.userLibraryID;
 
   await wipeLibrary(libraryID);
