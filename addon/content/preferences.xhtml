@@ -1,0 +1,30 @@
+<!-- Settings pane (requirements §F7), a fragment Zotero loads into its
+     settings window; filled in by src/ui/prefs.ts. The check report's FTL
+     supplies the settings notices (config-*). -->
+<linkset>
+  <html:link rel="localization" href="attanger-plus-preferences.ftl" />
+  <html:link rel="localization" href="attanger-plus-report.ftl" />
+</linkset>
+<vbox id="attanger-plus-prefs" onload="Zotero.AttangerPlus?.onPrefsLoad(document)">
+  <groupbox>
+    <label><html:h2 data-l10n-id="prefs-maintenance"></html:h2></label>
+    <checkbox id="attanger-plus-prefs-maintain" preference="maintainCopies" data-l10n-id="prefs-maintain" />
+    <html:p class="attanger-plus-prefs-hint" data-l10n-id="prefs-maintain-hint"></html:p>
+    <checkbox preference="dryRun" data-l10n-id="prefs-dry-run" />
+    <html:p class="attanger-plus-prefs-hint" data-l10n-id="prefs-dry-run-hint"></html:p>
+    <checkbox preference="notify" data-l10n-id="prefs-notify" />
+    <checkbox preference="inspectOnStartup" data-l10n-id="prefs-inspect" />
+  </groupbox>
+  <groupbox>
+    <label><html:h2 data-l10n-id="prefs-files"></html:h2></label>
+    <html:p id="attanger-plus-prefs-root"></html:p>
+    <html:ul id="attanger-plus-prefs-notices"></html:ul>
+  </groupbox>
+  <groupbox>
+    <label><html:h2 data-l10n-id="prefs-log"></html:h2></label>
+    <html:p id="attanger-plus-prefs-log-path"></html:p>
+    <hbox>
+      <button id="attanger-plus-prefs-open-log" data-l10n-id="prefs-open-log" />
+    </hbox>
+  </groupbox>
+</vbox>

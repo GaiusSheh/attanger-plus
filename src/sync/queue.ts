@@ -1,5 +1,5 @@
 import { log } from "../utils/log";
-import { getPref } from "../utils/prefs";
+import { getPref, isMaintaining, unwatchPref, watchPref } from "../utils/prefs";
 import { findingID, findingsOf, type Finding } from "./changes";
 import { writableRoot } from "./guard";
 import { execute } from "./ops";
@@ -107,6 +107,7 @@ export class SyncQueue {
   private timer?: number;
   private startupTimer?: number;
   private observerID?: string;
+  private switchWatch?: symbol;
   private paused = 0;
   private stopped = true;
   private state?: AttachmentState;
@@ -126,7 +127,28 @@ export class SyncQueue {
       ["item", "collection-item", "file", "collection"],
       "attanger-plus",
     );
+    this.switchWatch = watchPref("maintainCopies", () => this.onSwitch());
     this.scanLater();
+  }
+
+  /**
+   * The master switch (§F7). Turned off, what is marked is dropped; turned
+   * on, the startup scan runs at once, so that what changed meanwhile shows
+   * (file-manager changes in the changes window, the rest in the check).
+   */
+  private onSwitch(): void {
+    if (!isMaintaining()) {
+      this.clearMarks();
+      if (this.timer !== undefined) {
+        clearTimeout(this.timer);
+        this.timer = undefined;
+      }
+      log("sync: copy maintenance switched off");
+      return;
+    }
+    log("sync: copy maintenance switched on; scanning");
+    // Failures are logged by enqueue().
+    this.scan().catch(() => {});
   }
 
   /**
@@ -180,6 +202,10 @@ export class SyncQueue {
       Zotero.Notifier.unregisterObserver(this.observerID);
       this.observerID = undefined;
     }
+    if (this.switchWatch) {
+      unwatchPref(this.switchWatch);
+      this.switchWatch = undefined;
+    }
     this.clearTimers();
     this.clearMarks();
     await this.chain;
@@ -218,7 +244,8 @@ export class SyncQueue {
   /** The startup scan (temporary files, attachment state); also callable directly. */
   scan(): Promise<void> {
     return this.enqueue(async () => {
-      if (this.stopped) {
+      if (this.stopped || !isMaintaining()) {
+        // Switched off: switching on again runs the scan (onSwitch).
         return;
       }
       if (this.paused || syncInProgress()) {
@@ -322,7 +349,7 @@ export class SyncQueue {
   }
 
   private onNotify(event: string, type: string, ids: (string | number)[], extraData: Record<string, unknown>): void {
-    if (this.paused || this.stopped) {
+    if (this.paused || this.stopped || !isMaintaining()) {
       return;
     }
     try {

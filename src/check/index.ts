@@ -65,7 +65,7 @@ export async function runCheck(): Promise<CheckReport> {
 }
 
 /** The plugin assumes Attanger in linked mode with "{{collection}}" subfolders (requirements §3). */
-function attangerNotices(root: string | null): ConfigNotice[] {
+export function attangerNotices(root: string | null): ConfigNotice[] {
   const notices: ConfigNotice[] = [];
   const workMode = Zotero.Prefs.get("zoteroattanger.workMode") as string | undefined;
   const subfolder = Zotero.Prefs.get("zoteroattanger.subfolderFormat") as string | undefined;

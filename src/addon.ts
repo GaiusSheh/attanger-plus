@@ -2,6 +2,7 @@ import { runCheck, type CheckReport } from "./check";
 import type { resetTestLibrary } from "./dev/testLibrary";
 import hooks from "./hooks";
 import { SyncQueue } from "./sync/queue";
+import { initPrefsPane } from "./ui/prefs";
 
 export class Addon {
   readonly rootURI: string;
@@ -29,5 +30,14 @@ export class Addon {
    */
   check(): Promise<CheckReport> {
     return runCheck();
+  }
+
+  /** Fills in the settings pane once Zotero has loaded it (addon/content/preferences.xhtml). */
+  onPrefsLoad(doc: Document): void {
+    try {
+      initPrefsPane(doc);
+    } catch (e) {
+      Zotero.logError(e as Error);
+    }
   }
 }

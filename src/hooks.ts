@@ -1,6 +1,7 @@
 import { config, version } from "../package.json";
 import { l10nID } from "./ui/l10n";
 import { registerMenus, unregisterMenus } from "./ui/menu";
+import { registerPrefsPane } from "./ui/prefs";
 import { closeChangesWindows, showChanges } from "./ui/changes";
 import { closeRemoveDialogs } from "./ui/remove";
 import { closeReports } from "./ui/report";
@@ -21,8 +22,9 @@ async function onStartup(): Promise<void> {
   // Windows that were already open when the plugin was (re)installed never
   // receive onMainWindowLoad.
   await Promise.all(Zotero.getMainWindows().map((win) => onMainWindowLoad(win)));
-  // Menus are not worth failing the start for: copy maintenance must run.
+  // Menus and settings are not worth failing the start for: copy maintenance must run.
   await safely("startup: menus", registerMenus);
+  await safely("startup: settings pane", registerPrefsPane);
   addon().sync.onFindings = (findings) => {
     showChanges(findings).catch((e) => Zotero.logError(e));
   };

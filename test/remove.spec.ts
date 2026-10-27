@@ -63,6 +63,15 @@ describe("remove and restore", function () {
       assert.deepEqual(await entries(null, item("ok-multi")), { current: false, all: true, chosen: true });
       assert.deepEqual(await entries(null, item("c1-unfiled")), { current: false, all: false, chosen: false });
     });
+
+    it("disables them all while copy maintenance is switched off (§F7)", async function () {
+      setPref("maintainCopies", false);
+      try {
+        assert.deepEqual(await entries(collection("Physics/Optics"), item("ok-multi")), { current: false, all: false, chosen: false });
+      } finally {
+        setPref("maintainCopies", true);
+      }
+    });
   });
 
   describe("removal", function () {

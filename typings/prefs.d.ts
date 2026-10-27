@@ -7,6 +7,7 @@
 declare namespace _ZoteroTypes {
   interface Prefs {
     PluginPrefsMap: {
+      "maintainCopies": boolean;
       "dryRun": boolean;
       "inspectOnStartup": boolean;
       "notify": boolean;
