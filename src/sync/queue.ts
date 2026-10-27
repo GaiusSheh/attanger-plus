@@ -4,12 +4,15 @@ import { findingID, findingsOf, type Finding } from "./changes";
 import { writableRoot } from "./guard";
 import { execute } from "./ops";
 import {
+  eraseCollections,
   purgeErased,
   reconcile,
   reconcileFolders,
   recordCollectionFolders,
   recordSynced,
+  restoreCollections,
   scanAtStartup,
+  trashCollections,
   type Reconciled,
   type ScanSummary,
 } from "./reconcile";
@@ -65,12 +68,25 @@ interface Marked {
   since: number;
 }
 
-/** An item with files the user just removed from its last collection (§F3.3). */
+/**
+ * An item with files left in no collection: the user just removed it from
+ * its last collection (§F3.3), or erased the only collection it was in
+ * (§F5.3; then `erased` says which, and where its files wait meanwhile).
+ */
 export interface Unfiled {
   itemKey: string;
   itemTitle: string;
-  /** The collections it was removed from, by ID. */
+  /** The collections it was removed from, by ID (none when its collection was erased). */
   removedFrom: number[];
+  erased?: ErasedCollection;
+}
+
+export interface ErasedCollection {
+  collectionKey: string;
+  /** Name of the erased collection (its folder's last part). */
+  collectionName: string;
+  /** The item's files in that collection's plugin trash folder, and where each was. */
+  files: { attachmentKey: string; from: string; original: string }[];
 }
 
 const { setTimeout, clearTimeout } = ChromeUtils.importESModule("resource://gre/modules/Timer.sys.mjs");
@@ -79,6 +95,11 @@ export class SyncQueue {
   private marked = new Map<string, Marked>();
   /** Collections renamed or moved here, by ID, whose folders are to follow (§F5.1). */
   private collections = new Set<number>();
+  /** Collections moved to / restored from Zotero's trash here, by key (§F5.3). */
+  private collectionsTrashed = new Set<string>();
+  private collectionsRestored = new Set<string>();
+  /** Collections sync just changed, by ID: their trash event is the other device's. */
+  private syncedCollections = new Set<number>();
   /** Items sync just changed: item ID -> when; read by their collection-item and trash events. */
   private synced = new Map<number, number>();
   private timer?: number;
@@ -135,16 +156,14 @@ export class SyncQueue {
       this.observerID = undefined;
     }
     this.clearTimers();
-    this.marked.clear();
-    this.collections.clear();
+    this.clearMarks();
     await this.chain;
   }
 
   /** Ignore events and drop marked items until resume(); waits for running work to end. */
   async pause(): Promise<void> {
     this.paused++;
-    this.marked.clear();
-    this.collections.clear();
+    this.clearMarks();
     if (this.timer !== undefined) {
       clearTimeout(this.timer);
       this.timer = undefined;
@@ -165,7 +184,7 @@ export class SyncQueue {
         this.timer = undefined;
       }
       await this.enqueue(() => this.process(true));
-      if (!this.marked.size && !this.collections.size) {
+      if (!this.pending()) {
         return;
       }
     }
@@ -278,7 +297,7 @@ export class SyncQueue {
       } else if (type === "collection") {
         this.onCollection(event, ids, extraData);
       }
-      if (this.marked.size || this.collections.size) {
+      if (this.pending()) {
         this.schedule();
       }
     } catch (e) {
@@ -421,14 +440,50 @@ export class SyncQueue {
       this.recordCollections().catch(() => {});
       return;
     }
+    if (event === "trash") {
+      // Into Zotero's trash, with its descendants (§F5.3); sync's comes after its own modify.
+      for (const id of ids) {
+        const c = Zotero.Collections.get(Number(id)) as Zotero.Collection | false;
+        if (c && c.libraryID === Zotero.Libraries.userLibraryID && !this.syncedCollections.has(c.id)) {
+          this.collectionsTrashed.add(c.key);
+        }
+      }
+      return;
+    }
+    if (event === "delete") {
+      const erased: string[] = [];
+      for (const id of ids) {
+        const data = extraData?.[id] as { key?: string; libraryID?: number; skipDeleteLog?: boolean } | undefined;
+        if (data?.key && data.libraryID === Zotero.Libraries.userLibraryID && !data.skipDeleteLog) {
+          erased.push(data.key);
+        }
+      }
+      if (erased.length) {
+        this.enqueue(async () => {
+          const { unfiled } = await eraseCollections(erased, await this.loadState());
+          if (unfiled.length && !this.stopped) {
+            this.onUnfiled?.(unfiled);
+          }
+        }).catch(() => {});
+      }
+      return;
+    }
     if (event !== "modify") {
       return;
     }
     let synced = false;
     for (const id of ids) {
-      const data = extraData?.[id] as { skipSelect?: boolean } | undefined;
+      const data = extraData?.[id] as { skipSelect?: boolean; changed?: { deleted?: boolean } } | undefined;
       if (data?.skipSelect && syncInProgress()) {
         synced = true;
+        this.syncedCollections.add(Number(id));
+        continue;
+      }
+      this.syncedCollections.delete(Number(id));
+      const c = Zotero.Collections.get(Number(id)) as Zotero.Collection | false;
+      // `changed` holds the values from before: out of Zotero's trash.
+      if (c && data?.changed?.deleted === true && !c.deleted) {
+        this.collectionsRestored.add(c.key);
       } else {
         this.collections.add(Number(id));
       }
@@ -457,6 +512,18 @@ export class SyncQueue {
     }
   }
 
+  /** Whether anything is marked for the next round. */
+  private pending(): boolean {
+    return !!(this.marked.size || this.collections.size || this.collectionsTrashed.size || this.collectionsRestored.size);
+  }
+
+  private clearMarks(): void {
+    this.marked.clear();
+    this.collections.clear();
+    this.collectionsTrashed.clear();
+    this.collectionsRestored.clear();
+  }
+
   private mark(key: string): Marked {
     let m = this.marked.get(key);
     if (!m) {
@@ -481,12 +548,28 @@ export class SyncQueue {
     if (this.stopped || this.paused) {
       return;
     }
-    // Folders first, so that the items are reconciled against the new ones.
+    // Folders first, so that the items are reconciled against the new ones;
+    // collections leaving for the trash last, after their items (deleted
+    // along with them) took their own files to the trash.
+    if (this.collectionsRestored.size) {
+      const keys = [...this.collectionsRestored];
+      this.collectionsRestored.clear();
+      await restoreCollections(keys, await this.loadState());
+    }
     if (this.collections.size) {
       const ids = [...this.collections];
       this.collections.clear();
       await reconcileFolders(ids, await this.loadState());
     }
+    await this.processItems(force);
+    if (this.collectionsTrashed.size) {
+      const keys = [...this.collectionsTrashed];
+      this.collectionsTrashed.clear();
+      await trashCollections(keys, await this.loadState());
+    }
+  }
+
+  private async processItems(force: boolean): Promise<void> {
     const waitForAttanger = !force && (await attangerConvertsNewFiles());
     const now = Date.now();
     const ready = new Map<string, Intent>();

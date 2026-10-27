@@ -1,8 +1,15 @@
 import { Hasher } from "../check/hash";
-import { pathKey, relativeTo } from "../check/paths";
+import { pathKey, relativeTo, toAbsolute } from "../check/paths";
 import { TEMP_SUFFIX, type DiskFile } from "../check/snapshot";
 import { isDryRun } from "../utils/prefs";
-import { resolveInRoot, resolveReplacedPath, resolveTrashPath, Skip, writableRoot } from "./guard";
+import {
+  resolveCollectionTrashPath,
+  resolveInRoot,
+  resolveReplacedPath,
+  resolveTrashPath,
+  Skip,
+  writableRoot,
+} from "./guard";
 import { appendLog } from "./log";
 import type {
   CopyOp,
@@ -13,6 +20,7 @@ import type {
   MoveFolderOp,
   Operation,
   OpResult,
+  PurgeCollectionTrashOp,
   PurgeReplacedOp,
   PurgeTrashOp,
   RelinkOp,
@@ -70,11 +78,18 @@ function dryRunResult(root: string, operation: Operation): OpResult {
   } else if (operation.op === "purge-replaced") {
     resolveReplacedPath(root, operation.path);
   } else if (operation.op === "trash") {
+    trashSource(root, operation.path);
     resolveTrashPath(root, operation.to);
   } else if (operation.op === "untrash") {
     resolveTrashPath(root, operation.from);
   } else if (operation.op === "purge-trash") {
     resolveTrashPath(root, operation.path, "folder");
+  } else if (operation.op === "trash-collection") {
+    resolveCollectionTrashPath(root, operation.to);
+  } else if (operation.op === "untrash-collection") {
+    resolveCollectionTrashPath(root, operation.from);
+  } else if (operation.op === "purge-collection-trash") {
+    resolveCollectionTrashPath(root, operation.path, "folder");
   }
   return { operation, status: "dry-run" };
 }
@@ -93,8 +108,10 @@ function pathsOf(operation: Operation): string[] {
     case "relink":
       return [operation.to];
     case "discard-temp":
-    case "trash":
       return [operation.path];
+    case "trash":
+      // Checked by trashSource(): it may also lie in a collection's plugin trash.
+      return [];
     case "untrash":
       return [operation.to];
     case "move-folder":
@@ -104,6 +121,12 @@ function pathsOf(operation: Operation): string[] {
       return [operation.path];
     case "repoint":
       return [operation.to];
+    case "trash-collection":
+      return [operation.from];
+    case "untrash-collection":
+      return [operation.to];
+    case "purge-collection-trash":
+      return [];
     case "purge-replaced":
     case "purge-trash":
       return [];
@@ -142,7 +165,102 @@ async function run(root: string, operation: Operation, hasher: Hasher): Promise<
       return removeEmptyFolder(root, operation);
     case "repoint":
       return repoint(root, operation);
+    case "trash-collection":
+      return moveTreeOp(operation, resolveInRoot(root, operation.from), resolveCollectionTrashPath(root, operation.to), hasher);
+    case "untrash-collection":
+      return moveTreeOp(operation, resolveCollectionTrashPath(root, operation.from), resolveInRoot(root, operation.to), hasher);
+    case "purge-collection-trash":
+      return purgeCollectionTrash(root, operation);
   }
+}
+
+/**
+ * A collection's folder (or one file) into or out of the plugin trash
+ * (§F5.3): moved at once if the target is free, else file by file, an
+ * identical file in place counting as moved and a different one staying
+ * behind (reported as skipped); emptied source folders go.
+ */
+async function moveTreeOp(operation: Operation, from: string, to: string, hasher: Hasher): Promise<OpResult> {
+  if (!(await IOUtils.exists(from))) {
+    if (await IOUtils.exists(to)) {
+      return { operation, status: "unchanged", reason: "already-moved" };
+    }
+    throw new Skip("source-missing", from);
+  }
+  const kept = await moveTree(from, to, hasher);
+  if (kept.length) {
+    throw new Skip("target-exists-differs", `${kept.length} file(s) left in ${from}, e.g. ${kept[0]}`);
+  }
+  return { operation, status: "done" };
+}
+
+/** Returns the files that stayed behind because a different file is in their place. */
+async function moveTree(from: string, to: string, hasher: Hasher): Promise<string[]> {
+  const info = await IOUtils.stat(from);
+  if (!(await IOUtils.exists(to))) {
+    if (Zotero.isWin) {
+      // OneDrive marks folders read-only (known_pits B1).
+      await IOUtils.setWindowsAttributes(from, { readOnly: false });
+    }
+    await IOUtils.makeDirectory(PathUtils.parent(to)!, { createAncestors: true, ignoreExisting: true });
+    await IOUtils.move(from, to, { noOverwrite: true });
+    if (!(await IOUtils.exists(to)) || (await IOUtils.exists(from))) {
+      throw new Error(`move not completed: ${from} -> ${to}`);
+    }
+    return [];
+  }
+  if (info.type !== "directory") {
+    const source = await fileAt(from);
+    const existing = await fileAt(to);
+    if (source && existing && (await hasher.same(source, existing))) {
+      await removeFile(from);
+      return [];
+    }
+    return [from];
+  }
+  const kept: string[] = [];
+  for (const child of await IOUtils.getChildren(from)) {
+    kept.push(...(await moveTree(child, PathUtils.join(to, PathUtils.filename(child)), hasher)));
+  }
+  if (!kept.length) {
+    await clearReadOnlyTree(from);
+    await IOUtils.remove(from, { recursive: true });
+  }
+  return kept;
+}
+
+/**
+ * A trashed collection's plugin trash folder. After a restore only an
+ * empty one goes. After Zotero erased the collection the rest goes, unless
+ * the collection still exists or a live attachment needs a file of it (its
+ * file is missing where the attachment points, and here is one of that
+ * path); such files are moved back first (see reconcile.ts).
+ */
+async function purgeCollectionTrash(root: string, op: PurgeCollectionTrashOp): Promise<OpResult> {
+  const path = resolveCollectionTrashPath(root, op.path, "folder");
+  if (!(await IOUtils.exists(path))) {
+    return { operation: op, status: "unchanged", reason: "already-absent" };
+  }
+  const files = await filesUnder(path);
+  if (op.onlyIfEmpty && files.length) {
+    throw new Skip("not-empty", `${op.path} (${files.length} file(s))`);
+  }
+  if (!op.onlyIfEmpty) {
+    const collection = Zotero.Collections.getByLibraryAndKey(Zotero.Libraries.userLibraryID, op.collectionKey);
+    if (collection) {
+      throw new Skip("collection-exists", op.collectionKey);
+    }
+    const live = await pointedFiles(root, { liveOnly: true });
+    for (const file of files) {
+      const original = relativeTo(path, file);
+      if (original !== null && live.has(pathKey(original)) && !(await IOUtils.exists(toAbsolute(root, original)))) {
+        throw new Skip("in-use", original);
+      }
+    }
+  }
+  await clearReadOnlyTree(path);
+  await IOUtils.remove(path, { recursive: true });
+  return { operation: op, status: "done" };
 }
 
 /**
@@ -278,7 +396,7 @@ async function isFolder(abs: string): Promise<boolean> {
  * move was done before; the one left behind goes.
  */
 async function trash(root: string, op: TrashOp, hasher: Hasher): Promise<OpResult> {
-  const from = resolveInRoot(root, op.path);
+  const from = trashSource(root, op.path);
   const to = resolveTrashPath(root, op.to);
   const source = await fileAt(from);
   const existing = await fileAt(to);
@@ -304,6 +422,18 @@ async function trash(root: string, op: TrashOp, hasher: Hasher): Promise<OpResul
     throw new Error(`move into the plugin trash not completed: ${op.path}`);
   }
   return { operation: op, status: "done" };
+}
+
+/** Where a file goes into an item's trash from: the root, or an erased collection's plugin trash folder. */
+function trashSource(root: string, rel: string): string {
+  try {
+    return resolveInRoot(root, rel);
+  } catch (e) {
+    if (e instanceof Skip && e.reason === "in-plugin-trash") {
+      return resolveCollectionTrashPath(root, rel);
+    }
+    throw e;
+  }
 }
 
 /** Back out of the plugin trash; never over a different file. */

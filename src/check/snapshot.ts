@@ -10,6 +10,12 @@ export const PLUGIN_TRASH = ".attanger-plus-trash";
 export const REPLACED_BUCKET = "_replaced";
 
 /**
+ * Subfolder of the plugin trash for the folders of collections in Zotero's
+ * trash (§F5.3): `_collections/<collection key>/<the folder's path>`.
+ */
+export const COLLECTIONS_BUCKET = "_collections";
+
+/**
  * Suffix of the temporary file a copy is written to before it gets its real
  * name (src/sync/ops.ts). One left behind by a crash is not an orphan.
  */

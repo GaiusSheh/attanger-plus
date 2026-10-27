@@ -1,5 +1,5 @@
 import { pathKey, relativeTo, toAbsolute } from "../check/paths";
-import { PLUGIN_TRASH, REPLACED_BUCKET } from "../check/snapshot";
+import { COLLECTIONS_BUCKET, PLUGIN_TRASH, REPLACED_BUCKET } from "../check/snapshot";
 import { testDataDir } from "../utils/testDataDir";
 
 /** A precondition did not hold: the operation is skipped, nothing is done. */
@@ -25,7 +25,7 @@ export function resolveInRoot(root: string, rel: string): string {
   return absoluteInRoot(root, rel);
 }
 
-/** Zotero item keys: 8 characters from Zotero's key alphabet. */
+/** Zotero item and collection keys: 8 characters from Zotero's key alphabet. */
 const ITEM_KEY = /^[23456789ABCDEFGHIJKLMNPQRSTUVWXYZ]{8}$/;
 
 /** Plugin trash path of an item's or attachment's files (§F4): `.attanger-plus-trash/<key>/…`. */
@@ -45,6 +45,28 @@ export function resolveTrashPath(root: string, rel: string, depth: "folder" | "i
     (depth === "folder" ? parts.length === 2 : parts.length >= 3);
   if (!ok) {
     throw new Skip("not-in-item-trash", rel);
+  }
+  return absoluteInRoot(root, rel);
+}
+
+/** Plugin trash path of a trashed collection's folder (§F5.3): `.attanger-plus-trash/_collections/<key>/…`. */
+export function collectionTrashPath(key: string, rel = ""): string {
+  return rel ? `${PLUGIN_TRASH}/${COLLECTIONS_BUCKET}/${key}/${rel}` : `${PLUGIN_TRASH}/${COLLECTIONS_BUCKET}/${key}`;
+}
+
+/**
+ * Absolute path of `rel`, which must lie inside the plugin trash folder of
+ * one collection key: the folder itself (`depth` "folder") or something in it.
+ */
+export function resolveCollectionTrashPath(root: string, rel: string, depth: "folder" | "inside" = "inside"): string {
+  const parts = plainParts(rel);
+  const ok =
+    pathKey(parts[0]) === pathKey(PLUGIN_TRASH) &&
+    parts[1] === COLLECTIONS_BUCKET &&
+    ITEM_KEY.test(parts[2] ?? "") &&
+    (depth === "folder" ? parts.length === 3 : parts.length >= 4);
+  if (!ok) {
+    throw new Skip("not-in-collection-trash", rel);
   }
   return absoluteInRoot(root, rel);
 }

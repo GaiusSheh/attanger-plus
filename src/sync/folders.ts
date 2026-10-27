@@ -80,7 +80,7 @@ function moveOps(s: Snapshot, collectionKey: string, from: string, to: string): 
  * follows the collection (the check then reports it missing, not also
  * misplaced).
  */
-function relinkOps(s: Snapshot, from: string, to: string): (RelinkOp | RepointOp)[] {
+export function relinkOps(s: Snapshot, from: string, to: string): (RelinkOp | RepointOp)[] {
   const ops: (RelinkOp | RepointOp)[] = [];
   for (const e of s.entries) {
     if (e.deleted) {
@@ -98,7 +98,7 @@ function relinkOps(s: Snapshot, from: string, to: string): (RelinkOp | RepointOp
 }
 
 /** `rel` relative to `folder` when it lies inside it, else null. */
-function under(rel: string, folder: string): string | null {
+export function under(rel: string, folder: string): string | null {
   const prefix = `${pathKey(folder)}/`;
   return pathKey(rel).startsWith(prefix) ? rel.slice(prefix.length) : null;
 }

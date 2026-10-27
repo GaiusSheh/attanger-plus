@@ -21,7 +21,7 @@ changes-failed =
        *[other] { $count } steps could not be completed; see the operation log for why.
     }
 # Shown after the unfiled window has closed, so it lives here (src/ui/unfiled.ts).
-unfiled-done = Put back: { $cancelled } item(s); moved to the trash: { $trashedItems } item(s); files deleted: { $trashedFiles } item(s).
+unfiled-done = Put back: { $cancelled } item(s); moved to the trash: { $trashedItems } item(s); files deleted: { $trashedFiles } item(s); deleted for good: { $erasedItems } item(s); kept with their files in the root: { $kept } item(s).
 unfiled-dry-run = Dry-run mode is on: the changes in Zotero were made, but files were only logged, not moved.
 menu-remove-current =
     .label = Remove from Current Collection

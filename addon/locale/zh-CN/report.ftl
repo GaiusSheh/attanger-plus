@@ -59,3 +59,4 @@ issue-C12-download-suffix = { $path } 像是重复下载的文件
 issue-C12-name-template = { $path } 不符合命名模板（应为「{ $related }」）
 issue-C14-trash-without-item = { $path }（{ $count } 个文件）不属于 Zotero 回收站里的任何条目
 issue-C14-trashed-file-outside-trash = { $path } 属于 Zotero 回收站里的条目
+issue-C14-trash-without-collection = { $path }（{ $count } 个文件）不属于 Zotero 回收站里的任何 collection

@@ -1,5 +1,8 @@
 import type { FluentMessageId } from "../../typings/i10n";
-import type { Unfiled } from "../sync/queue";
+import { baseOf } from "../check/paths";
+import { purgeCollectionTrashOp } from "../sync/collectionTrash";
+import { trashPath } from "../sync/guard";
+import type { ErasedCollection, Unfiled } from "../sync/queue";
 import { isDryRun } from "../utils/prefs";
 import { collectionNames } from "../utils/zotero";
 import { l10nID } from "./l10n";
@@ -15,6 +18,17 @@ import { l10nID } from "./l10n";
  * - keep the item, delete the files: its attachments go to Zotero's trash,
  *   and the copies in the folders it just left go to the plugin trash with
  *   them; the item stays in My Library, in no collection.
+ * Items whose only collection the user erased (§F5.3; Phase 3-5, option
+ * A) wait with their files in that collection's plugin trash folder, and
+ * cannot go back into it. Their choices:
+ * - trash the item (the default, and what closing means): the files move
+ *   into the item's own plugin trash folder, the item to Zotero's trash;
+ * - erase the item: likewise, but the item is erased at once, which takes
+ *   its plugin trash folder with it (no second emptying of the trash);
+ * - keep the item, delete the files: likewise for its attachments;
+ * - keep both: the files go to the files root itself, where Attanger puts
+ *   the files of items in no collection, and Zotero points there.
+ * Afterwards the collection's plugin trash folder goes.
  * These are changes in Zotero, made also in dry-run mode; only the file
  * moves that follow are held back there.
  */
@@ -25,7 +39,12 @@ const WINDOW_TYPE = "attanger-plus:unfiled";
 const XHTML = "http://www.w3.org/1999/xhtml";
 const TITLE = "Attanger Plus";
 
-export type UnfiledChoice = "cancel" | "trash-item" | "trash-files";
+export type UnfiledChoice = "cancel" | "trash-item" | "erase-item" | "trash-files" | "keep";
+
+/** What closing the window means for an item: cancel, or (its collection erased) trash it. */
+export function defaultChoice(u: Unfiled): UnfiledChoice {
+  return u.erased ? "trash-item" : "cancel";
+}
 
 export interface UnfiledDecision {
   item: Unfiled;
@@ -40,6 +59,10 @@ export interface UnfiledApplied {
   trashedItems: number;
   /** Items whose attachments were moved to Zotero's trash. */
   trashedFiles: number;
+  /** Items of an erased collection erased at once, with their files. */
+  erasedItems: number;
+  /** Items of an erased collection kept with their files, now in the files root. */
+  kept: number;
 }
 
 interface UnfiledWindow extends Window {
@@ -90,11 +113,24 @@ export async function applyUnfiled(decisions: UnfiledDecision[]): Promise<Unfile
   if (!sync) {
     throw new Error("Attanger Plus is not running");
   }
-  const applied: UnfiledApplied = { dryRun: isDryRun(), cancelled: 0, trashedItems: 0, trashedFiles: 0 };
+  const applied: UnfiledApplied = {
+    dryRun: isDryRun(),
+    cancelled: 0,
+    trashedItems: 0,
+    trashedFiles: 0,
+    erasedItems: 0,
+    kept: 0,
+  };
   const libraryID = Zotero.Libraries.userLibraryID;
+  const erasedCollections = new Set<string>();
   for (const { item: u, choice } of decisions) {
     const item = Zotero.Items.getByLibraryAndKey(libraryID, u.itemKey);
     if (!item || item.deleted) {
+      continue;
+    }
+    if (u.erased) {
+      await applyErased(item, u.erased, choice, applied);
+      erasedCollections.add(u.erased.collectionKey);
       continue;
     }
     // Collections that still exist; one deleted meanwhile cannot take the item back.
@@ -127,7 +163,51 @@ export async function applyUnfiled(decisions: UnfiledDecision[]): Promise<Unfile
       applied.trashedFiles++;
     }
   }
+  // Their files are out: the erased collections' trash folders go (unless a file stayed).
+  if (erasedCollections.size) {
+    await sync.run([...erasedCollections].map(purgeCollectionTrashOp));
+  }
   return applied;
+}
+
+/** An item whose only collection was erased: its files leave that collection's plugin trash folder. */
+async function applyErased(item: Zotero.Item, erased: ErasedCollection, choice: UnfiledChoice, applied: UnfiledApplied) {
+  const sync = Zotero.AttangerPlus!.sync;
+  const ids = (f: ErasedCollection["files"][number]) => ({ itemKey: item.key, attachmentKey: f.attachmentKey });
+  if (choice === "keep") {
+    for (const f of erased.files) {
+      const to = baseOf(f.original);
+      const [moved] = await sync.run([{ op: "untrash-collection", collectionKey: erased.collectionKey, from: f.from, to }]);
+      // Only onto the file just put there, never onto another one already in the root.
+      if (moved.status === "done") {
+        await sync.run([{ op: "relink", ...ids(f), to }]);
+      }
+    }
+    applied.kept++;
+    return;
+  }
+  const attachments = choice === "trash-files";
+  await sync.run(
+    erased.files.map((f) => ({
+      op: "trash" as const,
+      ...ids(f),
+      path: f.from,
+      to: trashPath(attachments ? f.attachmentKey : item.key, f.original),
+    })),
+  );
+  if (attachments) {
+    const keys = new Set(erased.files.map((f) => f.attachmentKey));
+    const trashed = (Zotero.Items.get(item.getAttachments()) as Zotero.Item[]).filter((a) => keys.has(a.key));
+    await Zotero.Items.trashTx(trashed.map((a) => a.id));
+    applied.trashedFiles++;
+  } else if (choice === "erase-item") {
+    // Its delete event makes the plugin purge the item's trash folder, files included.
+    await item.eraseTx();
+    applied.erasedItems++;
+  } else {
+    await Zotero.Items.trashTx([item.id]);
+    applied.trashedItems++;
+  }
 }
 
 function liveCollections(ids: number[]): number[] {
@@ -173,7 +253,7 @@ class UnfiledView {
             resolve(null);
           });
       };
-      const cancelAll = () => run(this.items.map((item) => ({ item, choice: "cancel" as const })));
+      const cancelAll = () => run(this.items.map((item) => ({ item, choice: defaultChoice(item) })));
       this.element("apply").addEventListener("click", () => {
         const decisions = this.readers.map((read) => read());
         run(decisions);
@@ -183,7 +263,9 @@ class UnfiledView {
         cancelAll();
         win.close();
       });
-      // Closing means "cancel" (Q2), unless the window was replaced or Zotero is closing.
+      // Closing means each item's default: "cancel" (Q2), or for an erased
+      // collection "trash the item"; not when the window was replaced or
+      // Zotero is closing.
       win.addEventListener("unload", () => {
         if (win.attangerPlusSilentClose) {
           if (!answered) {
@@ -214,21 +296,37 @@ class UnfiledView {
       // Text is localized asynchronously; this identifies a row for tests and agents.
       row.dataset.itemKey = u.itemKey;
       const text = this.create("p");
-      this.localize(text, "unfiled-item", { title: u.itemTitle, collections, files: files.length });
       const choices = this.create("div");
       choices.className = "choices";
-      const options: [UnfiledChoice, FluentMessageId][] = [
-        ["cancel", "unfiled-cancel"],
-        ["trash-item", "unfiled-trash-item"],
-        ["trash-files", "unfiled-trash-files"],
-      ];
+      let options: [UnfiledChoice, FluentMessageId][];
+      if (u.erased) {
+        this.localize(text, "unfiled-erased-item", {
+          title: u.itemTitle,
+          collection: u.erased.collectionName,
+          files: u.erased.files.length,
+        });
+        options = [
+          ["trash-item", "unfiled-erased-trash-item"],
+          ["erase-item", "unfiled-erased-erase-item"],
+          ["trash-files", "unfiled-trash-files"],
+          ["keep", "unfiled-erased-keep"],
+        ];
+      } else {
+        this.localize(text, "unfiled-item", { title: u.itemTitle, collections, files: files.length });
+        options = [
+          ["cancel", "unfiled-cancel"],
+          ["trash-item", "unfiled-trash-item"],
+          ["trash-files", "unfiled-trash-files"],
+        ];
+      }
+      const initial = defaultChoice(u);
       const radios = options.map(([value, id]) => {
         const label = this.create("label");
         const radio = this.create("input");
         radio.type = "radio";
         radio.name = `choice-${u.itemKey}`;
         radio.value = value;
-        radio.checked = value === "cancel";
+        radio.checked = value === initial;
         const span = this.create("span");
         this.localize(span, id, { collections, annotations });
         label.append(radio, " ", span);
@@ -237,7 +335,7 @@ class UnfiledView {
       });
       this.readers.push(() => ({
         item: u,
-        choice: (radios.find((r) => r.checked)?.value ?? "cancel") as UnfiledChoice,
+        choice: (radios.find((r) => r.checked)?.value ?? initial) as UnfiledChoice,
       }));
       row.append(text, choices);
       list.append(row);
@@ -254,6 +352,8 @@ class UnfiledView {
         cancelled: applied.cancelled,
         trashedItems: applied.trashedItems,
         trashedFiles: applied.trashedFiles,
+        erasedItems: applied.erasedItems,
+        kept: applied.kept,
       }),
     ];
     if (applied.dryRun) {

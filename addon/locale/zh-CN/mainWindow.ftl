@@ -13,7 +13,7 @@ changes-dry-run = 试运行模式：文件操作（恢复、同步、重新定�
 changes-done = 已完成：恢复 { $restored } 份副本，从 collection 移除 { $removed } 次，同步 { $synced } 份副本，重新定位 { $relocated } 个文件，移进回收站 { $trashed } 项，忽略 { $ignored } 条。
 changes-failed = 有 { $count } 项没能完成，原因见操作日志。
 # Shown after the unfiled window has closed, so it lives here (src/ui/unfiled.ts).
-unfiled-done = 加回 collection：{ $cancelled } 个条目；移进回收站：{ $trashedItems } 个条目；删除文件：{ $trashedFiles } 个条目。
+unfiled-done = 加回 collection：{ $cancelled } 个条目；移进回收站：{ $trashedItems } 个条目；删除文件：{ $trashedFiles } 个条目；彻底删除：{ $erasedItems } 个条目；保留条目和文件（放到根目录）：{ $kept } 个条目。
 unfiled-dry-run = 试运行开着：Zotero 里的改动已经生效，文件只记了日志，没有挪动。
 menu-remove-current =
     .label = 从当前 collection 移除

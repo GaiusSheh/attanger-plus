@@ -65,3 +65,7 @@ issue-C14-trash-without-item = { $path } ({ $count ->
        *[other] { $count } files
     }) belongs to no item in Zotero’s trash
 issue-C14-trashed-file-outside-trash = { $path } belongs to an item in Zotero’s trash
+issue-C14-trash-without-collection = { $path } ({ $count ->
+        [one] 1 file
+       *[other] { $count } files
+    }) belongs to no collection in Zotero’s trash

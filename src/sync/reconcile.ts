@@ -1,14 +1,16 @@
 import { linked } from "../check/checks";
 import { Hasher } from "../check/hash";
-import { baseOf, dirOf, pathKey, relativeTo } from "../check/paths";
+import { baseOf, dirOf, pathKey, relativeTo, toAbsolute } from "../check/paths";
 import { readCollections, readTrash, takeSnapshot, type EntryInfo } from "../check/snapshot";
 import { log } from "../utils/log";
 import { isDryRun } from "../utils/prefs";
 import { purgeOps } from "./changes";
-import { writableRoot } from "./guard";
+import { collectionTrashPath, writableRoot } from "./guard";
+import { planCollectionErase, planCollectionRestore, planCollectionTrash } from "./collectionTrash";
 import { planFolderMoves, recordFolders } from "./folders";
 import { execute } from "./ops";
 import { planEntry } from "./plan";
+import type { Unfiled } from "./queue";
 import type { AttachmentState } from "./state";
 import { planRestore, planTrash, purgeEmptyTrashOps, purgeErasedOps } from "./trash";
 import type { Intent, OpResult, PlanNote } from "./types";
@@ -95,6 +97,69 @@ export async function reconcileFolders(collectionIDs: number[], state: Attachmen
     await state.save();
   }
   return results;
+}
+
+/**
+ * Collections moved to Zotero's trash here (§F5.3): their folders go to the
+ * plugin trash; then the live items that pointed into them are reconciled
+ * (pointed at a copy elsewhere when they have one).
+ */
+export async function trashCollections(keys: string[], state: AttachmentState): Promise<OpResult[]> {
+  const root = writableRoot();
+  const dryRun = isDryRun();
+  const snapshot = await takeSnapshot(root);
+  const results: OpResult[] = [];
+  const affected = new Set<string>();
+  for (const key of keys) {
+    const { plan, affected: entries } = planCollectionTrash(snapshot, state, key);
+    results.push(...(await execute(plan.operations, { dryRun })));
+    logNotes(`collection ${key}`, plan.notes);
+    entries.forEach((e) => affected.add(e));
+  }
+  if (affected.size && results.some((r) => r.status === "done")) {
+    await reconcile(new Map([...affected].map((k) => [k, {}])), state);
+  }
+  return results;
+}
+
+/** Collections restored here from Zotero's trash (§F5.3): their folders come back. */
+export async function restoreCollections(keys: string[], state: AttachmentState): Promise<OpResult[]> {
+  const root = writableRoot();
+  const dryRun = isDryRun();
+  const snapshot = await takeSnapshot(root);
+  const results: OpResult[] = [];
+  for (const key of keys) {
+    const plan = planCollectionRestore(snapshot, state, key);
+    results.push(...(await execute(plan.operations, { dryRun })));
+  }
+  if (!dryRun) {
+    recordFolders(snapshot.collections, state);
+    await state.save();
+  }
+  return results;
+}
+
+/**
+ * Collections Zotero erased here (§F5.3): their plugin trash folders go;
+ * items left in no collection are returned for the user to decide on.
+ */
+export async function eraseCollections(
+  keys: string[],
+  state: AttachmentState,
+): Promise<{ results: OpResult[]; unfiled: Unfiled[] }> {
+  const root = writableRoot();
+  const snapshot = await takeSnapshot(root);
+  const results: OpResult[] = [];
+  const unfiled: Unfiled[] = [];
+  for (const key of keys) {
+    const hasTrashFolder = await IOUtils.exists(toAbsolute(root, collectionTrashPath(key)));
+    const erased = planCollectionErase(snapshot, key, state.collectionFolder(key), hasTrashFolder);
+    results.push(...(await execute(erased.plan.operations)));
+    unfiled.push(...erased.unfiled);
+    state.deleteCollectionFolder(key);
+  }
+  await state.save();
+  return { results, unfiled };
 }
 
 /** Record the current folder of every collection (new ones, or changes sync brought in). */

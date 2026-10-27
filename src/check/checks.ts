@@ -2,7 +2,7 @@ import { templateBaseName } from "../utils/zotero";
 import type { Hasher } from "./hash";
 import { baseOf, dirOf, joinRel, pathKey } from "./paths";
 import type { AttachmentInfo, CollectionInfo, DiskFile, EntryInfo, Snapshot } from "./snapshot";
-import { PLUGIN_TRASH, REPLACED_BUCKET } from "./snapshot";
+import { COLLECTIONS_BUCKET, PLUGIN_TRASH, REPLACED_BUCKET } from "./snapshot";
 import type { Issue } from "./types";
 
 /*
@@ -405,6 +405,33 @@ function checkFileNames(s: Snapshot): Issue[] {
   return issues;
 }
 
+/**
+ * C14 for the folders of trashed collections (§F5.3): each must belong to a
+ * collection in Zotero's trash.
+ */
+function checkCollectionTrash(files: DiskFile[]): Issue[] {
+  const counts = new Map<string, number>();
+  const prefix = `${PLUGIN_TRASH}/${COLLECTIONS_BUCKET}/`;
+  for (const f of files) {
+    const key = f.rel.startsWith(prefix) ? f.rel.slice(prefix.length).split("/")[0] : "";
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  const issues: Issue[] = [];
+  for (const [key, count] of counts) {
+    const collection = key ? Zotero.Collections.getByLibraryAndKey(Zotero.Libraries.userLibraryID, key) : false;
+    if (!collection || !collection.deleted) {
+      issues.push({
+        check: "C14",
+        kind: "trash-without-collection",
+        severity: "problem",
+        path: joinRel(PLUGIN_TRASH, COLLECTIONS_BUCKET, key),
+        count,
+      });
+    }
+  }
+  return issues;
+}
+
 function foldName(name: string): string {
   return name.normalize("NFD").replace(/\p{M}/gu, "").toLowerCase().trim();
 }
@@ -454,6 +481,10 @@ function checkTrash(s: Snapshot): Issue[] {
   }
   for (const [name, files] of s.trash) {
     if (name === REPLACED_BUCKET) {
+      continue;
+    }
+    if (name === COLLECTIONS_BUCKET) {
+      issues.push(...checkCollectionTrash(files));
       continue;
     }
     if (!name || !trashedKeys.has(name)) {

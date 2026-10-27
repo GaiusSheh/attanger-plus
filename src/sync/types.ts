@@ -78,7 +78,8 @@ export interface ImportOp {
 
 /**
  * Move a file of a trashed item or attachment into the plugin trash (§F4):
- * `path` in the root to `to` = `.attanger-plus-trash/<key>/<path>`.
+ * `path` in the root to `to` = `.attanger-plus-trash/<key>/<path>`. `path`
+ * may also lie in an erased collection's plugin trash folder (§F5.3).
  */
 export interface TrashOp {
   op: "trash";
@@ -147,6 +148,42 @@ export interface RemoveEmptyFolderOp {
   path: string;
 }
 
+/**
+ * Move a trashed collection's folder (`from`, in the root) into the plugin
+ * trash at `to` = `.attanger-plus-trash/_collections/<key>/<from>` (§F5.3).
+ * Into an existing place it goes file by file, never over a different file.
+ */
+export interface TrashCollectionOp {
+  op: "trash-collection";
+  collectionKey: string;
+  from: string;
+  to: string;
+}
+
+/**
+ * Move a folder or file of a trashed collection back out of the plugin
+ * trash (§F5.3): on restore, or a file a live item still needs when the
+ * collection is erased. Same rules as trash-collection.
+ */
+export interface UntrashCollectionOp {
+  op: "untrash-collection";
+  collectionKey: string;
+  from: string;
+  to: string;
+}
+
+/**
+ * Delete `.attanger-plus-trash/_collections/<key>` (§F5.3): after a restore
+ * only if no file is left; after Zotero erased the collection, with what is
+ * left, unless a live attachment needs a file of it.
+ */
+export interface PurgeCollectionTrashOp {
+  op: "purge-collection-trash";
+  collectionKey: string;
+  path: string;
+  onlyIfEmpty: boolean;
+}
+
 export type Operation =
   | CopyOp
   | DeleteOp
@@ -162,7 +199,10 @@ export type Operation =
   | MoveFolderOp
   | MoveFileOp
   | RepointOp
-  | RemoveEmptyFolderOp;
+  | RemoveEmptyFolderOp
+  | TrashCollectionOp
+  | UntrashCollectionOp
+  | PurgeCollectionTrashOp;
 
 /**
  * - done: carried out and verified
