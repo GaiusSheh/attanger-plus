@@ -5,3 +5,5 @@ pref("dryRun", true);
 // Look for changes made in the file manager at startup (requirements §F3).
 // The test runner turns it off: its fixtures are such changes on purpose.
 pref("inspectOnStartup", true);
+// Notify in the corner of the main window what copy maintenance did (requirements §F9).
+pref("notify", true);

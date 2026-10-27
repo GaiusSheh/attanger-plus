@@ -6,6 +6,7 @@ import type { ErasedCollection, Unfiled } from "../sync/queue";
 import { isDryRun } from "../utils/prefs";
 import { collectionNames } from "../utils/zotero";
 import { l10nID } from "./l10n";
+import { showMessages } from "./toast";
 
 /*
  * Items with files just removed from their last collection (requirements
@@ -37,7 +38,6 @@ const URL = "chrome://attangerplus/content/unfiled.xhtml";
 /** Matches the windowtype attribute in unfiled.xhtml. */
 const WINDOW_TYPE = "attanger-plus:unfiled";
 const XHTML = "http://www.w3.org/1999/xhtml";
-const TITLE = "Attanger Plus";
 
 export type UnfiledChoice = "cancel" | "trash-item" | "erase-item" | "trash-files" | "keep";
 
@@ -359,7 +359,8 @@ class UnfiledView {
     if (applied.dryRun) {
       notes.push(await format("unfiled-dry-run"));
     }
-    Services.prompt.alert(main as unknown as mozIDOMWindowProxy, TITLE, notes.join("\n\n"));
+    // In the corner, like the notifications after copy maintenance (§F9).
+    showMessages(notes);
   }
 
   private element(id: string): HTMLElement {

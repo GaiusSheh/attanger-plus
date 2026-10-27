@@ -285,8 +285,10 @@ async function withSyncPaused<T>(fn: () => Promise<T>): Promise<T> {
     // Let the last Notifier events arrive while still paused.
     await Zotero.Promise.delay(200);
     sync.resume();
-    // The new collections' add events were ignored: record their folders (§F5.1).
-    await sync.recordCollections();
+    // The new items' and collections' events were ignored, and all keys are
+    // new: record attachments and collection folders as the startup scan
+    // does, or the first rename would find no previous name (§F3.5, §F5.1).
+    await sync.recordLibrary();
   }
 }
 

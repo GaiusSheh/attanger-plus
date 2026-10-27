@@ -3,6 +3,7 @@ import type { Intent } from "../sync/types";
 import { isDryRun } from "../utils/prefs";
 import { collectionNames } from "../utils/zotero";
 import { l10nID } from "./l10n";
+import { showMessages } from "./toast";
 
 const TITLE = "Attanger Plus";
 
@@ -105,7 +106,8 @@ async function handleMissing(missing: RevealTarget[]): Promise<void> {
     }
   }
   if (!restorable.length) {
-    Services.prompt.alert(parent, TITLE, lines.join("\n\n"));
+    // Nothing to decide: say it in the corner (§F9).
+    showMessages(lines, true);
     return;
   }
 
@@ -128,9 +130,7 @@ async function handleMissing(missing: RevealTarget[]): Promise<void> {
   const notes = dryRun
     ? [await text("reveal-restore-dry-run")]
     : await Promise.all(failed.map((t) => text("reveal-restore-failed", { file: PathUtils.filename(t.path) })));
-  if (notes.length) {
-    Services.prompt.alert(parent, TITLE, notes.join("\n\n"));
-  }
+  showMessages(notes, !dryRun);
 }
 
 /**

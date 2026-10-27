@@ -9,6 +9,7 @@ declare namespace _ZoteroTypes {
     PluginPrefsMap: {
       "dryRun": boolean;
       "inspectOnStartup": boolean;
+      "notify": boolean;
     };
   }
 }

@@ -1,7 +1,7 @@
 import { linked } from "../check/checks";
 import { Hasher } from "../check/hash";
 import { baseOf, dirOf, pathKey, relativeTo, toAbsolute } from "../check/paths";
-import { readCollections, readTrash, takeSnapshot, type EntryInfo } from "../check/snapshot";
+import { readCollections, readTrash, takeSnapshot, type EntryInfo, type Snapshot } from "../check/snapshot";
 import { log } from "../utils/log";
 import { isDryRun } from "../utils/prefs";
 import { purgeOps } from "./changes";
@@ -220,6 +220,22 @@ export async function scanAtStartup(state: AttachmentState): Promise<ScanSummary
   const snapshot = await takeSnapshot(root);
   const tempFiles = await execute(snapshot.tempFiles.map((f) => ({ op: "discard-temp" as const, path: f.rel })));
   const purged = await execute(await purgeOps(root));
+  const { recorded, forgotten } = recordUnknown(snapshot, state);
+  await state.save();
+  return { tempFiles, purged, recorded, forgotten };
+}
+
+/**
+ * Record the attachments and collection folders the state does not know yet,
+ * and forget erased ones, as the startup scan does (also after building a
+ * test library, whose items all have new keys).
+ */
+export async function recordLibrary(state: AttachmentState): Promise<void> {
+  recordUnknown(await takeSnapshot(writableRoot()), state);
+  await state.save();
+}
+
+function recordUnknown(snapshot: Snapshot, state: AttachmentState): { recorded: number; forgotten: number } {
   const live = new Set<string>();
   let recorded = 0;
   for (const e of snapshot.entries) {
@@ -254,8 +270,7 @@ export async function scanAtStartup(state: AttachmentState): Promise<ScanSummary
       state.deleteCollectionFolder(key);
     }
   }
-  await state.save();
-  return { tempFiles, purged, recorded, forgotten };
+  return { recorded, forgotten };
 }
 
 /**

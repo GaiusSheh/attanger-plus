@@ -12,6 +12,7 @@ import type { Intent, OpResult } from "../sync/types";
 import { isDryRun } from "../utils/prefs";
 import { l10nID } from "./l10n";
 import { removeFromCollections } from "./remove";
+import { showMessages } from "./toast";
 
 /*
  * The summary window for changes made in the file manager (requirements
@@ -26,7 +27,6 @@ const URL = "chrome://attangerplus/content/changes.xhtml";
 /** Matches the windowtype attribute in changes.xhtml. */
 const WINDOW_TYPE = "attanger-plus:changes";
 const XHTML = "http://www.w3.org/1999/xhtml";
-const TITLE = "Attanger Plus";
 
 type L10nArgs = Record<string, string | number>;
 
@@ -534,7 +534,8 @@ class ChangesView {
     } else if (applied.failed.length) {
       notes.push(await format("changes-failed", { count: applied.failed.length }));
     }
-    Services.prompt.alert(main as unknown as mozIDOMWindowProxy, TITLE, notes.join("\n\n"));
+    // In the corner, like the notifications after copy maintenance (§F9).
+    showMessages(notes, !applied.dryRun && applied.failed.length > 0);
   }
 
   private element(id: string): HTMLElement {

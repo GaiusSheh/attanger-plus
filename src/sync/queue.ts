@@ -9,6 +9,7 @@ import {
   reconcile,
   reconcileFolders,
   recordCollectionFolders,
+  recordLibrary,
   recordSynced,
   restoreCollections,
   scanAtStartup,
@@ -17,6 +18,7 @@ import {
   type ScanSummary,
 } from "./reconcile";
 import { AttachmentState } from "./state";
+import { isEmpty, summarize, type Summary, type SummarizeOptions } from "./summary";
 import type { Intent, Operation, OpResult } from "./types";
 
 /*
@@ -114,6 +116,8 @@ export class SyncQueue {
   onFindings?: (findings: Finding[]) => void;
   /** Receives items just removed from their last collection, for the user to decide on (§F3.3; set by the UI). */
   onUnfiled?: (items: Unfiled[]) => void;
+  /** Receives what a round of copy maintenance did, when it did anything (§F9; set by the UI). */
+  onApplied?: (summary: Summary) => void;
 
   start(): void {
     this.stopped = false;
@@ -263,6 +267,19 @@ export class SyncQueue {
     }
   }
 
+  /** Tell the UI what was done; a round that changed nothing on disk stays quiet. */
+  private tell(results: OpResult[], options?: SummarizeOptions): void {
+    const summary = summarize(results, options);
+    if (isEmpty(summary) || this.stopped) {
+      return;
+    }
+    try {
+      this.onApplied?.(summary);
+    } catch (e) {
+      log(`sync: notifying failed: ${String(e)}`);
+    }
+  }
+
   /** Automatic windows (startup, opening an attachment) leave out what the user ignored. */
   private report(all: Finding[]): void {
     const findings = all.filter((f) => !f.ignored);
@@ -359,7 +376,7 @@ export class SyncQueue {
       }
       if (erased.length) {
         this.enqueue(async () => {
-          await purgeErased(erased);
+          this.tell(await purgeErased(erased));
         }).catch(() => {});
       }
       return;
@@ -460,7 +477,11 @@ export class SyncQueue {
       }
       if (erased.length) {
         this.enqueue(async () => {
-          const { unfiled } = await eraseCollections(erased, await this.loadState());
+          const state = await this.loadState();
+          // Their folders, to name them by once Zotero no longer has them.
+          const folders = new Map(erased.map((key) => [key, state.collectionFolder(key) ?? ""]));
+          const { results, unfiled } = await eraseCollections(erased, state);
+          this.tell(results, { erased: folders });
           if (unfiled.length && !this.stopped) {
             this.onUnfiled?.(unfiled);
           }
@@ -493,9 +514,14 @@ export class SyncQueue {
     }
   }
 
-  /** Record where every collection's folder is now (also after building a test library while paused). */
+  /** Record where every collection's folder is now. */
   recordCollections(): Promise<void> {
     return this.enqueue(async () => recordCollectionFolders(await this.loadState()));
+  }
+
+  /** Record what the state does not know yet, as the startup scan does (after building a test library while paused). */
+  recordLibrary(): Promise<void> {
+    return this.enqueue(async () => recordLibrary(await this.loadState()));
   }
 
   /** An attachment was opened: look at its item now (known_pits A7: `file` `open`). */
@@ -551,25 +577,27 @@ export class SyncQueue {
     // Folders first, so that the items are reconciled against the new ones;
     // collections leaving for the trash last, after their items (deleted
     // along with them) took their own files to the trash.
+    const results: OpResult[] = [];
     if (this.collectionsRestored.size) {
       const keys = [...this.collectionsRestored];
       this.collectionsRestored.clear();
-      await restoreCollections(keys, await this.loadState());
+      results.push(...(await restoreCollections(keys, await this.loadState())));
     }
     if (this.collections.size) {
       const ids = [...this.collections];
       this.collections.clear();
-      await reconcileFolders(ids, await this.loadState());
+      results.push(...(await reconcileFolders(ids, await this.loadState())));
     }
-    await this.processItems(force);
+    results.push(...(await this.processItems(force)));
     if (this.collectionsTrashed.size) {
       const keys = [...this.collectionsTrashed];
       this.collectionsTrashed.clear();
-      await trashCollections(keys, await this.loadState());
+      results.push(...(await trashCollections(keys, await this.loadState())));
     }
+    this.tell(results);
   }
 
-  private async processItems(force: boolean): Promise<void> {
+  private async processItems(force: boolean): Promise<OpResult[]> {
     const waitForAttanger = !force && (await attangerConvertsNewFiles());
     const now = Date.now();
     const ready = new Map<string, Intent>();
@@ -586,12 +614,15 @@ export class SyncQueue {
       });
       this.marked.delete(key);
     }
+    let done: Reconciled[] = [];
     if (ready.size) {
-      this.reportUnfiled(await reconcile(ready, await this.loadState()), ready);
+      done = await reconcile(ready, await this.loadState());
+      this.reportUnfiled(done, ready);
     }
     if (this.marked.size && !force) {
       this.schedule();
     }
+    return done.flatMap((r) => r.results);
   }
 
   /**

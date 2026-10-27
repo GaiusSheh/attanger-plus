@@ -91,6 +91,8 @@ export default defineConfig({
       // The test library's fixtures are file-manager changes on purpose; the
       // startup scan must not act on them or open its window mid-run.
       [`${prefsPrefix}.inspectOnStartup`]: false,
+      // Notifications would pile up over the run; test/toast.spec.ts turns them on for itself.
+      [`${prefsPrefix}.notify`]: false,
     },
     hooks: {
       // scaffold has no local source for chai and would otherwise download an

@@ -4,6 +4,7 @@ import { registerMenus, unregisterMenus } from "./ui/menu";
 import { closeChangesWindows, showChanges } from "./ui/changes";
 import { closeRemoveDialogs } from "./ui/remove";
 import { closeReports } from "./ui/report";
+import { closeToast, showSummary } from "./ui/toast";
 import { closeUnfiledWindows, showUnfiled } from "./ui/unfiled";
 import { log } from "./utils/log";
 
@@ -27,6 +28,9 @@ async function onStartup(): Promise<void> {
   };
   addon().sync.onUnfiled = (items) => {
     showUnfiled(items).catch((e) => Zotero.logError(e));
+  };
+  addon().sync.onApplied = (summary) => {
+    showSummary(summary).catch((e) => Zotero.logError(e));
   };
   addon().sync.start();
 
@@ -60,6 +64,7 @@ async function onShutdown(): Promise<void> {
     closeRemoveDialogs();
     closeChangesWindows();
     closeUnfiledWindows();
+    closeToast();
   });
   for (const win of Zotero.getMainWindows()) {
     await safely("shutdown: main window", () => onMainWindowUnload(win));
