@@ -109,6 +109,44 @@ export interface PurgeTrashOp {
   onlyIfEmpty: boolean;
 }
 
+/**
+ * Move a collection's folder with everything in it to where the collection
+ * now is (§F5.1); the target must not exist (a case-only change excepted).
+ */
+export interface MoveFolderOp {
+  op: "move-folder";
+  collectionKey: string;
+  from: string;
+  to: string;
+}
+
+/** Move one file into a collection's new folder that already exists (§F5.1); never over a different file. */
+export interface MoveFileOp {
+  op: "move-file";
+  collectionKey: string;
+  from: string;
+  to: string;
+}
+
+/**
+ * Change the path Zotero stores for an attachment whose file is missing, to
+ * where the file belongs now that its collection's folder moved (§F5.1).
+ * No file is touched.
+ */
+export interface RepointOp {
+  op: "repoint";
+  itemKey: string;
+  attachmentKey: string;
+  to: string;
+}
+
+/** Remove a collection's old folder once nothing but empty folders is left in it (§F5.1). */
+export interface RemoveEmptyFolderOp {
+  op: "remove-empty-folder";
+  collectionKey: string;
+  path: string;
+}
+
 export type Operation =
   | CopyOp
   | DeleteOp
@@ -120,7 +158,11 @@ export type Operation =
   | ImportOp
   | TrashOp
   | UntrashOp
-  | PurgeTrashOp;
+  | PurgeTrashOp
+  | MoveFolderOp
+  | MoveFileOp
+  | RepointOp
+  | RemoveEmptyFolderOp;
 
 /**
  * - done: carried out and verified
@@ -176,7 +218,9 @@ export interface PlanNote {
     /** A file of a trashed attachment that a live item uses too (known_pits A8): left in place. */
     | "in-use"
     /** A file in the plugin trash that has no place among the restored item's collection folders. */
-    | "left-in-trash";
+    | "left-in-trash"
+    /** A renamed or moved collection's old folder still belongs to another collection: left alone. */
+    | "folder-shared";
   path?: string;
 }
 

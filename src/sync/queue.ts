@@ -3,7 +3,16 @@ import { getPref } from "../utils/prefs";
 import { findingID, findingsOf, type Finding } from "./changes";
 import { writableRoot } from "./guard";
 import { execute } from "./ops";
-import { purgeErased, reconcile, recordSynced, scanAtStartup, type Reconciled, type ScanSummary } from "./reconcile";
+import {
+  purgeErased,
+  reconcile,
+  reconcileFolders,
+  recordCollectionFolders,
+  recordSynced,
+  scanAtStartup,
+  type Reconciled,
+  type ScanSummary,
+} from "./reconcile";
 import { AttachmentState } from "./state";
 import type { Intent, Operation, OpResult } from "./types";
 
@@ -68,6 +77,8 @@ const { setTimeout, clearTimeout } = ChromeUtils.importESModule("resource://gre/
 
 export class SyncQueue {
   private marked = new Map<string, Marked>();
+  /** Collections renamed or moved here, by ID, whose folders are to follow (§F5.1). */
+  private collections = new Set<number>();
   /** Items sync just changed: item ID -> when; read by their collection-item and trash events. */
   private synced = new Map<number, number>();
   private timer?: number;
@@ -87,7 +98,7 @@ export class SyncQueue {
     this.stopped = false;
     this.observerID = Zotero.Notifier.registerObserver(
       { notify: (event: string, type: string, ids: (string | number)[], extraData: Record<string, unknown>) => this.onNotify(event, type, ids, extraData) },
-      ["item", "collection-item", "file"],
+      ["item", "collection-item", "file", "collection"],
       "attanger-plus",
     );
     this.scanLater();
@@ -125,6 +136,7 @@ export class SyncQueue {
     }
     this.clearTimers();
     this.marked.clear();
+    this.collections.clear();
     await this.chain;
   }
 
@@ -132,6 +144,7 @@ export class SyncQueue {
   async pause(): Promise<void> {
     this.paused++;
     this.marked.clear();
+    this.collections.clear();
     if (this.timer !== undefined) {
       clearTimeout(this.timer);
       this.timer = undefined;
@@ -152,7 +165,7 @@ export class SyncQueue {
         this.timer = undefined;
       }
       await this.enqueue(() => this.process(true));
-      if (!this.marked.size) {
+      if (!this.marked.size && !this.collections.size) {
         return;
       }
     }
@@ -262,8 +275,10 @@ export class SyncQueue {
         this.onItem(event, ids, extraData);
       } else if (type === "file" && event === "open") {
         this.onOpen(ids);
+      } else if (type === "collection") {
+        this.onCollection(event, ids, extraData);
       }
-      if (this.marked.size) {
+      if (this.marked.size || this.collections.size) {
         this.schedule();
       }
     } catch (e) {
@@ -395,6 +410,39 @@ export class SyncQueue {
     log(`sync: ${attachmentKeys.length} attachment(s) changed by Zotero sync; records updated, files left alone`);
   }
 
+  /**
+   * Collections (§F5.1). A rename or move made here moves the folder; one
+   * sync brought in only updates the recorded folders (the other device
+   * moved it). Sync saves with `skipSelect`, but so does undo, hence also
+   * the check that a sync is running. New collections are recorded.
+   */
+  private onCollection(event: string, ids: (string | number)[], extraData: Record<string, unknown>): void {
+    if (event === "add") {
+      this.recordCollections().catch(() => {});
+      return;
+    }
+    if (event !== "modify") {
+      return;
+    }
+    let synced = false;
+    for (const id of ids) {
+      const data = extraData?.[id] as { skipSelect?: boolean } | undefined;
+      if (data?.skipSelect && syncInProgress()) {
+        synced = true;
+      } else {
+        this.collections.add(Number(id));
+      }
+    }
+    if (synced) {
+      this.recordCollections().catch(() => {});
+    }
+  }
+
+  /** Record where every collection's folder is now (also after building a test library while paused). */
+  recordCollections(): Promise<void> {
+    return this.enqueue(async () => recordCollectionFolders(await this.loadState()));
+  }
+
   /** An attachment was opened: look at its item now (known_pits A7: `file` `open`). */
   private onOpen(ids: (string | number)[]): void {
     const keys = new Set<string>();
@@ -432,6 +480,12 @@ export class SyncQueue {
   private async process(force: boolean): Promise<void> {
     if (this.stopped || this.paused) {
       return;
+    }
+    // Folders first, so that the items are reconciled against the new ones.
+    if (this.collections.size) {
+      const ids = [...this.collections];
+      this.collections.clear();
+      await reconcileFolders(ids, await this.loadState());
     }
     const waitForAttanger = !force && (await attangerConvertsNewFiles());
     const now = Date.now();

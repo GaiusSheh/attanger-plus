@@ -28,6 +28,12 @@ interface StateFile {
    * written before 2-5.
    */
   ignored?: string[];
+  /**
+   * Folder of each collection, by key, as last known (§F5.1): a rename or
+   * move is judged against it, since a parent's change moves its
+   * descendants' folders without an event of their own. Absent before 3-4.
+   */
+  collections?: Record<string, string>;
 }
 
 export function stateFile(): string {
@@ -84,6 +90,22 @@ export class AttachmentState {
 
   keys(): string[] {
     return Object.keys(this.data.attachments);
+  }
+
+  collectionFolder(collectionKey: string): string | undefined {
+    return this.data.collections?.[collectionKey];
+  }
+
+  setCollectionFolder(collectionKey: string, folder: string): void {
+    (this.data.collections ??= {})[collectionKey] = folder;
+  }
+
+  deleteCollectionFolder(collectionKey: string): void {
+    delete this.data.collections?.[collectionKey];
+  }
+
+  collectionKeys(): string[] {
+    return Object.keys(this.data.collections ?? {});
   }
 
   /** Written to a temporary file first, so a crash never leaves half a file. */

@@ -1,11 +1,12 @@
 import { linked } from "../check/checks";
 import { Hasher } from "../check/hash";
 import { baseOf, dirOf, pathKey, relativeTo } from "../check/paths";
-import { readTrash, takeSnapshot, type EntryInfo } from "../check/snapshot";
+import { readCollections, readTrash, takeSnapshot, type EntryInfo } from "../check/snapshot";
 import { log } from "../utils/log";
 import { isDryRun } from "../utils/prefs";
 import { purgeOps } from "./changes";
 import { writableRoot } from "./guard";
+import { planFolderMoves, recordFolders } from "./folders";
 import { execute } from "./ops";
 import { planEntry } from "./plan";
 import type { AttachmentState } from "./state";
@@ -73,6 +74,33 @@ export async function reconcile(requests: Map<string, Intent>, state: Attachment
   }
   await state.save();
   return done;
+}
+
+/**
+ * Collections renamed or moved here (§F5.1): their folders follow, and the
+ * attachments in them are relinked. The recorded folders are updated unless
+ * a step failed outright (then the old ones are kept for another try); a
+ * file skipped because a different one is in its place stays behind and
+ * the check reports it.
+ */
+export async function reconcileFolders(collectionIDs: number[], state: AttachmentState): Promise<OpResult[]> {
+  const root = writableRoot();
+  const dryRun = isDryRun();
+  const snapshot = await takeSnapshot(root);
+  const plan = planFolderMoves(snapshot, state, collectionIDs);
+  const results = await execute(plan.operations, { dryRun });
+  logNotes("collections", plan.notes);
+  if (!dryRun && !results.some((r) => r.status === "failed")) {
+    recordFolders(snapshot.collections, state);
+    await state.save();
+  }
+  return results;
+}
+
+/** Record the current folder of every collection (new ones, or changes sync brought in). */
+export async function recordCollectionFolders(state: AttachmentState): Promise<void> {
+  recordFolders(readCollections(Zotero.Libraries.userLibraryID), state);
+  await state.save();
 }
 
 /** Delete the plugin trash folders of items or attachments Zotero erased (§F4). */
@@ -147,6 +175,18 @@ export async function scanAtStartup(state: AttachmentState): Promise<ScanSummary
     if (!live.has(key)) {
       state.delete(key);
       forgotten++;
+    }
+  }
+  // Collection folders (§F5.1): record new ones; keep a known one, which
+  // may be the folder of a rename made while the plugin was not running.
+  for (const c of snapshot.collections.values()) {
+    if (state.collectionFolder(c.key) === undefined) {
+      state.setCollectionFolder(c.key, c.folder);
+    }
+  }
+  for (const key of state.collectionKeys()) {
+    if (!Zotero.Collections.getByLibraryAndKey(Zotero.Libraries.userLibraryID, key)) {
+      state.deleteCollectionFolder(key);
     }
   }
   await state.save();

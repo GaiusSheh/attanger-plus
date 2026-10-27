@@ -96,7 +96,7 @@ export async function readLibrary(root: string | null): Promise<Pick<Snapshot, "
   };
 }
 
-function readCollections(libraryID: number): Map<number, CollectionInfo> {
+export function readCollections(libraryID: number): Map<number, CollectionInfo> {
   // Collections in the trash are left out, as Zotero does for item membership.
   const active = Zotero.Collections.getByLibrary(libraryID, true);
   const byID = new Map(active.map((c) => [c.id, c]));

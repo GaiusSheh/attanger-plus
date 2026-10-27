@@ -9,12 +9,16 @@ import type {
   DeleteOp,
   DiscardTempOp,
   ImportOp,
+  MoveFileOp,
+  MoveFolderOp,
   Operation,
   OpResult,
   PurgeReplacedOp,
   PurgeTrashOp,
   RelinkOp,
+  RemoveEmptyFolderOp,
   RenameOp,
+  RepointOp,
   ReplaceOp,
   TrashOp,
   UntrashOp,
@@ -93,6 +97,13 @@ function pathsOf(operation: Operation): string[] {
       return [operation.path];
     case "untrash":
       return [operation.to];
+    case "move-folder":
+    case "move-file":
+      return [operation.from, operation.to];
+    case "remove-empty-folder":
+      return [operation.path];
+    case "repoint":
+      return [operation.to];
     case "purge-replaced":
     case "purge-trash":
       return [];
@@ -123,6 +134,140 @@ async function run(root: string, operation: Operation, hasher: Hasher): Promise<
       return untrash(root, operation, hasher);
     case "purge-trash":
       return purgeTrash(root, operation);
+    case "move-folder":
+      return moveFolder(root, operation);
+    case "move-file":
+      return moveFile(root, operation, hasher);
+    case "remove-empty-folder":
+      return removeEmptyFolder(root, operation);
+    case "repoint":
+      return repoint(root, operation);
+  }
+}
+
+/**
+ * Only for an attachment whose file is missing: its stored path moves with
+ * its collection's folder. If its file exists, or one is already at the new
+ * place, this is a case for a relink, not for this.
+ */
+async function repoint(root: string, op: RepointOp): Promise<OpResult> {
+  const to = resolveInRoot(root, op.to);
+  const attachment = Zotero.Items.getByLibraryAndKey(Zotero.Libraries.userLibraryID, op.attachmentKey);
+  if (
+    !attachment ||
+    !attachment.isAttachment() ||
+    attachment.attachmentLinkMode !== Zotero.Attachments.LINK_MODE_LINKED_FILE
+  ) {
+    throw new Skip("not-a-linked-attachment", op.attachmentKey);
+  }
+  const current = attachment.getFilePath() || null;
+  if (current && pathKey(relativeTo(root, current) ?? current) === pathKey(op.to)) {
+    return { operation: op, status: "unchanged", reason: "already-pointed" };
+  }
+  if (current && (await IOUtils.exists(current))) {
+    throw new Skip("file-exists", current);
+  }
+  if (await IOUtils.exists(to)) {
+    throw new Skip("target-exists", op.to);
+  }
+  attachment.attachmentPath = to;
+  await attachment.saveTx();
+  const now = attachment.getFilePath();
+  if (!now || pathKey(relativeTo(root, now) ?? now) !== pathKey(op.to)) {
+    throw new Error(`repoint not applied: now ${String(now)}, expected ${op.to}`);
+  }
+  return { operation: op, status: "done" };
+}
+
+/**
+ * A collection's folder to its new place, in one move (§F5.1). A change of
+ * case only goes through a temporary name: on case-insensitive file systems
+ * a direct move is a no-op.
+ */
+async function moveFolder(root: string, op: MoveFolderOp): Promise<OpResult> {
+  const from = resolveInRoot(root, op.from);
+  const to = resolveInRoot(root, op.to);
+  if (op.from === op.to) {
+    return { operation: op, status: "unchanged", reason: "same-path" };
+  }
+  if (pathKey(op.to).startsWith(`${pathKey(op.from)}/`)) {
+    throw new Skip("into-itself", op.to);
+  }
+  const caseOnly = pathKey(op.from) === pathKey(op.to);
+  if (!(await isFolder(from))) {
+    if (!caseOnly && (await isFolder(to))) {
+      return { operation: op, status: "unchanged", reason: "already-moved" };
+    }
+    throw new Skip("source-missing", op.from);
+  }
+  if (!caseOnly && (await IOUtils.exists(to))) {
+    throw new Skip("target-exists", op.to);
+  }
+  if (Zotero.isWin) {
+    // OneDrive marks folders read-only (known_pits B1).
+    await IOUtils.setWindowsAttributes(from, { readOnly: false });
+  }
+  await IOUtils.makeDirectory(PathUtils.parent(to)!, { createAncestors: true, ignoreExisting: true });
+  if (caseOnly) {
+    const tmp = to + TEMP_SUFFIX;
+    await IOUtils.move(from, tmp, { noOverwrite: true });
+    await IOUtils.move(tmp, to, { noOverwrite: true });
+  } else {
+    await IOUtils.move(from, to, { noOverwrite: true });
+  }
+  if (!(await isFolder(to)) || (!caseOnly && (await IOUtils.exists(from)))) {
+    throw new Error(`folder move not completed: ${op.from} -> ${op.to}`);
+  }
+  return { operation: op, status: "done" };
+}
+
+/** One file into a new folder that already exists; an identical file there means it is already in place. */
+async function moveFile(root: string, op: MoveFileOp, hasher: Hasher): Promise<OpResult> {
+  const from = resolveInRoot(root, op.from);
+  const to = resolveInRoot(root, op.to);
+  const source = await fileAt(from);
+  const existing = await fileAt(to);
+  if (!source) {
+    if (existing) {
+      return { operation: op, status: "unchanged", reason: "already-moved" };
+    }
+    throw new Skip("source-missing", op.from);
+  }
+  if (existing) {
+    if (!(await hasher.same(source, existing))) {
+      throw new Skip("target-exists-differs", op.to);
+    }
+    await removeFile(from);
+    return { operation: op, status: "done", reason: "identical-already-there" };
+  }
+  await IOUtils.makeDirectory(PathUtils.parent(to)!, { createAncestors: true, ignoreExisting: true });
+  await IOUtils.move(from, to, { noOverwrite: true });
+  if (!(await IOUtils.exists(to)) || (await IOUtils.exists(from))) {
+    throw new Error(`file move not completed: ${op.from} -> ${op.to}`);
+  }
+  return { operation: op, status: "done" };
+}
+
+/** Only a folder holding nothing but (empty) folders. */
+async function removeEmptyFolder(root: string, op: RemoveEmptyFolderOp): Promise<OpResult> {
+  const path = resolveInRoot(root, op.path);
+  if (!(await IOUtils.exists(path))) {
+    return { operation: op, status: "unchanged", reason: "already-absent" };
+  }
+  const files = await filesUnder(path);
+  if (files.length) {
+    throw new Skip("not-empty", `${op.path} (${files.length} file(s))`);
+  }
+  await clearReadOnlyTree(path);
+  await IOUtils.remove(path, { recursive: true });
+  return { operation: op, status: "done" };
+}
+
+async function isFolder(abs: string): Promise<boolean> {
+  try {
+    return (await IOUtils.stat(abs)).type === "directory";
+  } catch {
+    return false;
   }
 }
 
