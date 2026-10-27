@@ -1,6 +1,6 @@
 {
   "name": "attanger-plus",
-  "version": "0.2.2",
+  "version": "0.3.0",
   "description": "Companion to Attanger: keeps linked-file folders in sync with Zotero collections.",
   "config": {
     "addonName": "Attanger Plus",
