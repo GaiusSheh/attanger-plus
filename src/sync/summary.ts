@@ -45,6 +45,11 @@ export interface Summary {
  */
 const ROUTINE_SKIPS = new Set(["not-empty", "in-use", "collection-exists", "item-alive"]);
 
+/** Whether a result needs the user's look: failed, or skipped for other than a routine reason. */
+export function isProblem(r: OpResult): boolean {
+  return r.status === "failed" || (r.status === "skipped" && !ROUTINE_SKIPS.has(r.reason ?? ""));
+}
+
 export interface SummarizeOptions {
   /**
    * Collections just erased, by key, with their folders. Files moved out of
@@ -63,7 +68,7 @@ export function summarize(results: OpResult[], options: SummarizeOptions = {}): 
 
   for (const r of results) {
     if (r.status === "skipped" || r.status === "failed") {
-      if (r.status === "failed" || !ROUTINE_SKIPS.has(r.reason ?? "")) {
+      if (isProblem(r)) {
         problems++;
       }
       continue;

@@ -1,6 +1,6 @@
 import { Hasher } from "../check/hash";
 import { pathKey, relativeTo, toAbsolute } from "../check/paths";
-import { TEMP_SUFFIX, type DiskFile } from "../check/snapshot";
+import { COLLECTIONS_BUCKET, PLUGIN_TRASH, SET_ASIDE_BUCKETS, TEMP_SUFFIX, type DiskFile } from "../check/snapshot";
 import { isDryRun } from "../utils/prefs";
 import {
   resolveCollectionTrashPath,
@@ -28,6 +28,7 @@ import type {
   RenameOp,
   RepointOp,
   ReplaceOp,
+  SetAsideOp,
   TrashOp,
   UntrashOp,
 } from "./types";
@@ -90,6 +91,9 @@ function dryRunResult(root: string, operation: Operation): OpResult {
     resolveCollectionTrashPath(root, operation.from);
   } else if (operation.op === "purge-collection-trash") {
     resolveCollectionTrashPath(root, operation.path, "folder");
+  } else if (operation.op === "set-aside") {
+    setAsideSource(root, operation.path);
+    resolveReplacedPath(root, operation.to);
   }
   return { operation, status: "dry-run" };
 }
@@ -129,6 +133,9 @@ function pathsOf(operation: Operation): string[] {
       return [];
     case "purge-replaced":
     case "purge-trash":
+      return [];
+    case "set-aside":
+      // Checked by setAsideSource(): it may also lie in an unclaimed plugin trash folder.
       return [];
   }
 }
@@ -171,6 +178,63 @@ async function run(root: string, operation: Operation, hasher: Hasher): Promise<
       return moveTreeOp(operation, resolveCollectionTrashPath(root, operation.from), resolveInRoot(root, operation.to), hasher);
     case "purge-collection-trash":
       return purgeCollectionTrash(root, operation);
+    case "set-aside":
+      return setAside(root, operation);
+  }
+}
+
+/**
+ * Set a stray file aside (§F1.3), unless a live attachment points at it.
+ * A plugin trash folder left without files by it goes too.
+ */
+async function setAside(root: string, op: SetAsideOp): Promise<OpResult> {
+  const from = setAsideSource(root, op.path);
+  const to = resolveReplacedPath(root, op.to);
+  if (!(await fileAt(from))) {
+    if (await fileAt(to)) {
+      return { operation: op, status: "unchanged", reason: "already-moved" };
+    }
+    throw new Skip("source-missing", op.path);
+  }
+  if ((await pointedFiles(root, { liveOnly: true })).has(pathKey(op.path))) {
+    throw new Skip("in-use", op.path);
+  }
+  if (await IOUtils.exists(to)) {
+    throw new Skip("target-exists", op.to);
+  }
+  await IOUtils.makeDirectory(PathUtils.parent(to)!, { createAncestors: true, ignoreExisting: true });
+  await IOUtils.move(from, to, { noOverwrite: true });
+  if (!(await IOUtils.exists(to)) || (await IOUtils.exists(from))) {
+    throw new Error(`setting aside not completed: ${op.path}`);
+  }
+  const parts = op.path.split("/");
+  if (pathKey(parts[0]) === pathKey(PLUGIN_TRASH)) {
+    const folder = toAbsolute(root, `${parts[0]}/${parts[1]}`);
+    if (!(await filesUnder(folder)).length) {
+      await clearReadOnlyTree(folder);
+      await IOUtils.remove(folder, { recursive: true });
+    }
+  }
+  return { operation: op, status: "done" };
+}
+
+/**
+ * Where a file is set aside from: the root outside the plugin trash, or a
+ * plugin trash folder other than the areas the plugin keeps itself
+ * (collections' folders, replaced versions, files already set aside).
+ */
+function setAsideSource(root: string, rel: string): string {
+  try {
+    return resolveInRoot(root, rel);
+  } catch (e) {
+    if (!(e instanceof Skip && e.reason === "in-plugin-trash")) {
+      throw e;
+    }
+    const bucket = rel.split("/")[1] ?? "";
+    if (rel.split("/").length < 3 || bucket === COLLECTIONS_BUCKET || SET_ASIDE_BUCKETS.includes(bucket)) {
+      throw new Skip("not-a-stray-trash-file", rel);
+    }
+    return toAbsolute(root, rel);
   }
 }
 

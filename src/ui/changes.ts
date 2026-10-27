@@ -8,6 +8,8 @@ import {
   type CopyMissing,
   type Finding,
 } from "../sync/changes";
+import { applyRepairs, repairByDefault, repairID, type Repair } from "../sync/repair";
+import { isProblem } from "../sync/summary";
 import type { Intent, OpResult } from "../sync/types";
 import { isDryRun } from "../utils/prefs";
 import { l10nID } from "./l10n";
@@ -21,6 +23,10 @@ import { showMessages } from "./toast";
  * nothing is done until the user changes a choice and clicks "Apply".
  * "Ignore" only stops the automatic window: ignored findings are still
  * detected and listed here when the window is opened on request.
+ *
+ * Opened from the check report, it also lists the one-click repairs
+ * (§F1.3, sync/repair.ts), which start at "repair" (the user's choice,
+ * Phase 4-2) except for setting aside a file whose content is its own.
  */
 
 const URL = "chrome://attangerplus/content/changes.xhtml";
@@ -38,7 +44,8 @@ export type Decision =
   | { kind: "trash-attachment"; attachmentKey: string }
   | { kind: "trash-item"; itemKey: string }
   | { kind: "ignore"; findingID: string }
-  | { kind: "unignore"; findingID: string };
+  | { kind: "unignore"; findingID: string }
+  | { kind: "repair"; repair: Repair };
 
 export interface Applied {
   dryRun: boolean;
@@ -54,26 +61,31 @@ export interface Applied {
   ignored: number;
   /** Attachments or items moved to Zotero's trash. */
   trashed: number;
+  /** One-click repairs carried out (§F1.3). */
+  repaired: number;
   /** Operations that were skipped or failed. */
   failed: OpResult[];
 }
 
 /**
- * Show the findings; an open window is replaced (its findings merged in, so
- * nothing reported earlier is lost). `done` resolves after "Apply", or to
- * null when the window is closed without it.
+ * Show the findings, and the check report's repairs when given; an open
+ * window is replaced (its findings merged in, so nothing reported earlier is
+ * lost; its repairs kept unless new ones are given). `done` resolves after
+ * "Apply", or to null when the window is closed without it.
  */
 export async function showChanges(
   findings: Finding[],
-  options: { tellOutcome?: boolean } = {},
+  options: { tellOutcome?: boolean; repairs?: Repair[] } = {},
 ): Promise<{ win: Window; done: Promise<Applied | null> }> {
   const all = [...findings];
+  let repairs = options.repairs;
   for (const open of openWindows()) {
     for (const f of (open as WindowWithFindings).attangerPlusFindings ?? []) {
       if (!all.some((g) => findingID(g) === findingID(f))) {
         all.push(f);
       }
     }
+    repairs ??= (open as WindowWithFindings).attangerPlusRepairs;
     open.close();
   }
   const win = Zotero.getMainWindow().openDialog(URL, "", "chrome,centerscreen,dialog=no,resizable,width=780,height=600") as Window | null;
@@ -82,7 +94,8 @@ export async function showChanges(
   }
   await new Promise<void>((resolve) => win.addEventListener("load", () => resolve(), { once: true }));
   (win as WindowWithFindings).attangerPlusFindings = all;
-  const view = new ChangesView(win, all, options.tellOutcome ?? true);
+  (win as WindowWithFindings).attangerPlusRepairs = repairs;
+  const view = new ChangesView(win, all, repairs ?? [], options.tellOutcome ?? true);
   return { win, done: view.done };
 }
 
@@ -106,12 +119,20 @@ export async function applyDecisions(decisions: Decision[]): Promise<Applied> {
     relocated: 0,
     ignored: 0,
     trashed: 0,
+    repaired: 0,
     failed: [],
   };
   const collect = (results: OpResult[], op: string): number => {
     applied.failed.push(...results.filter((r) => r.status === "skipped" || r.status === "failed"));
     return results.filter((r) => r.operation.op === op && r.status === "done").length;
   };
+
+  // Repairs first: the plugin trash coming right may settle findings too.
+  const repairs = decisions.flatMap((d) => (d.kind === "repair" ? [d.repair] : []));
+  if (repairs.length) {
+    applied.failed.push(...(await applyRepairs(repairs)).filter(isProblem));
+    applied.repaired = repairs.length;
+  }
 
   const ignore = decisions.flatMap((d) => (d.kind === "ignore" ? [d.findingID] : []));
   const unignore = decisions.flatMap((d) => (d.kind === "unignore" ? [d.findingID] : []));
@@ -187,6 +208,7 @@ export async function applyDecisions(decisions: Decision[]): Promise<Applied> {
 
 interface WindowWithFindings extends Window {
   attangerPlusFindings?: Finding[];
+  attangerPlusRepairs?: Repair[];
 }
 
 interface FilePickerLike {
@@ -217,7 +239,8 @@ class ChangesView {
   constructor(
     private readonly win: Window,
     private readonly findings: Finding[],
-    /** Show what was done after "Apply" (off in tests: the alert is modal). */
+    private readonly repairs: Repair[],
+    /** Show what was done after "Apply" (off in tests). */
     private readonly notify: boolean,
   ) {
     this.doc = win.document;
@@ -267,6 +290,8 @@ class ChangesView {
       ["changes-section-all-missing", "all-missing"],
     ];
     const list = this.element("findings");
+    // The intro is about file-manager changes; repairs bring their own.
+    this.element("intro").hidden = !this.findings.length;
     for (const [heading, kind] of sections) {
       const ofKind = this.findings.filter((f) => f.kind === kind);
       if (!ofKind.length) {
@@ -285,6 +310,75 @@ class ChangesView {
       }
       list.append(section);
     }
+    this.renderRepairs(list);
+  }
+
+  /** The check report's one-click repairs (§F1.3), after the findings. */
+  private renderRepairs(list: HTMLElement): void {
+    if (!this.repairs.length) {
+      return;
+    }
+    const intro = this.create("p");
+    intro.className = "intro";
+    this.localize(intro, "changes-repair-heading");
+    list.append(intro);
+    const sections: [FluentMessageId, Repair["kind"][]][] = [
+      ["changes-section-trash", ["trash-outside", "trash-leftover", "collection-leftover"]],
+      ["changes-section-misplaced", ["misplaced"]],
+      ["changes-section-orphan", ["orphan"]],
+      ["changes-section-stray", ["stray-folder"]],
+    ];
+    for (const [heading, kinds] of sections) {
+      const ofKind = this.repairs.filter((r) => kinds.includes(r.kind));
+      if (!ofKind.length) {
+        continue;
+      }
+      const section = this.create("section");
+      const h2 = this.create("h2");
+      this.localize(h2, heading, { count: ofKind.length });
+      section.append(h2);
+      for (const r of ofKind) {
+        section.append(this.repairRow(r));
+      }
+      list.append(section);
+    }
+  }
+
+  /** One repair: what is wrong and what repairing does, with "repair" / "handle manually". */
+  private repairRow(r: Repair): HTMLElement {
+    const row = this.create("div");
+    row.className = "finding";
+    row.dataset.kind = r.kind;
+    row.dataset.repair = repairID(r);
+    const text = this.create("p");
+    const [id, args] = repairText(r);
+    this.localize(text, id, args);
+    row.append(text);
+
+    const container = this.create("div");
+    container.className = "choices";
+    const initial = repairByDefault(r) ? "repair" : "manual";
+    const radios = (
+      [
+        ["repair", "changes-fix"],
+        ["manual", "changes-manual"],
+      ] as [string, FluentMessageId][]
+    ).map(([value, labelID]) => {
+      const label = this.create("label");
+      const radio = this.create("input");
+      radio.type = "radio";
+      radio.name = `choice-${repairID(r)}`;
+      radio.value = value;
+      radio.checked = value === initial;
+      const span = this.create("span");
+      this.localize(span, labelID);
+      label.append(radio, " ", span);
+      container.append(label);
+      return radio;
+    });
+    this.readers.push(() => (radios.find((x) => x.checked)?.value === "repair" ? { kind: "repair", repair: r } : null));
+    row.append(container);
+    return row;
   }
 
   /** Row frame: the finding's text (marked when ignored) and its choice. */
@@ -519,16 +613,22 @@ class ChangesView {
     }
     const main = Zotero.getMainWindow();
     const format = (id: FluentMessageId, args?: L10nArgs) => main.document.l10n!.formatValue(l10nID(id), args) as Promise<string>;
-    const notes: string[] = [
-      await format("changes-done", {
-        restored: applied.restored,
-        removed: applied.removed,
-        synced: applied.synced,
-        relocated: applied.relocated,
-        trashed: applied.trashed,
-        ignored: applied.ignored,
-      }),
-    ];
+    const notes: string[] = [];
+    if (applied.repaired) {
+      notes.push(await format("repair-done", { count: applied.repaired }));
+    }
+    if (chosen > applied.repaired) {
+      notes.push(
+        await format("changes-done", {
+          restored: applied.restored,
+          removed: applied.removed,
+          synced: applied.synced,
+          relocated: applied.relocated,
+          trashed: applied.trashed,
+          ignored: applied.ignored,
+        }),
+      );
+    }
     if (applied.dryRun) {
       notes.push(await format("changes-dry-run"));
     } else if (applied.failed.length) {
@@ -552,6 +652,30 @@ class ChangesView {
 
   private localize(el: Element, id: FluentMessageId, args?: L10nArgs): void {
     this.doc.l10n!.setAttributes(el, l10nID(id), args);
+  }
+}
+
+/** The message describing a repair, and its arguments. */
+function repairText(r: Repair): [FluentMessageId, L10nArgs] {
+  switch (r.kind) {
+    case "trash-outside":
+      return ["changes-repair-trash-outside", { title: r.itemTitle, count: r.paths.length }];
+    case "trash-leftover":
+      return r.live
+        ? ["changes-repair-trash-live", { title: r.itemTitle ?? r.key, path: r.path, count: r.count }]
+        : ["changes-repair-trash-gone", { path: r.path, count: r.count }];
+    case "collection-leftover":
+      return r.live
+        ? ["changes-repair-collection-live", { collection: r.collectionPath ?? r.key, count: r.count }]
+        : ["changes-repair-collection-gone", { path: r.path, count: r.count }];
+    case "misplaced":
+      return [r.outside ? "changes-repair-outside" : "changes-repair-misplaced", { title: r.itemTitle, path: r.path, folder: r.folder }];
+    case "orphan":
+      return r.copyOf
+        ? ["changes-repair-orphan-copy", { path: r.path, copy: r.copyOf }]
+        : ["changes-repair-orphan-unique", { path: r.path }];
+    case "stray-folder":
+      return ["changes-repair-stray", { path: r.path, count: r.count }];
   }
 }
 

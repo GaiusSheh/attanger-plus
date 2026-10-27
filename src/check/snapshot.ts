@@ -10,6 +10,16 @@ export const PLUGIN_TRASH = ".attanger-plus-trash";
 export const REPLACED_BUCKET = "_replaced";
 
 /**
+ * Subfolder of the plugin trash for stray files set aside on the user's
+ * request (§F1.3: orphans, misplaced originals, unclaimed trash folders);
+ * like `_replaced`, purged after Zotero's trash period, and never C14's.
+ */
+export const ORPHANS_BUCKET = "_orphans";
+
+/** The plugin trash's areas for files set aside, each holding dated batch folders. */
+export const SET_ASIDE_BUCKETS = [REPLACED_BUCKET, ORPHANS_BUCKET];
+
+/**
  * Subfolder of the plugin trash for the folders of collections in Zotero's
  * trash (§F5.3): `_collections/<collection key>/<the folder's path>`.
  */

@@ -137,9 +137,30 @@ export class SyncQueue {
     return this.enqueue(() => this.inspectNow(itemKeys));
   }
 
+  /** Run `work` in turn with all other work, with the attachment state (one-click repairs, §F1.3). */
+  exclusive<T>(work: (state: AttachmentState) => Promise<T>): Promise<T> {
+    return this.enqueue(async () => work(await this.loadState()));
+  }
+
+  /** Hand items left in no collection to the UI to decide on (§F3.3, §F5.3). */
+  askUnfiled(items: Unfiled[]): void {
+    if (items.length && !this.stopped) {
+      this.onUnfiled?.(items);
+    }
+  }
+
   /** Carry out operations in turn with all other work (e.g. the user's choices in the changes window). */
   run(operations: Operation[]): Promise<OpResult[]> {
     return this.enqueue(() => execute(operations));
+  }
+
+  /** Ignore a check report notice (§F1.1, C12), or stop ignoring it. */
+  setIssueIgnored(issueID: string, ignored: boolean): Promise<void> {
+    return this.enqueue(async () => {
+      const state = await this.loadState();
+      state.setIssueIgnored(issueID, ignored);
+      await state.save();
+    });
   }
 
   /** Ignore findings (no automatic window), or stop ignoring them. */

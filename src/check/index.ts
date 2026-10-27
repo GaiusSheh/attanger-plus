@@ -2,7 +2,8 @@ import { checkFiles, checkLibrary } from "./checks";
 import { Hasher } from "./hash";
 import { pathKey } from "./paths";
 import { readLibrary, takeSnapshot } from "./snapshot";
-import { CHECK_IDS, type CheckId, type CheckReport, type ConfigNotice, type Issue } from "./types";
+import { readIgnoredIssues } from "../sync/state";
+import { CHECK_IDS, IGNORABLE_CHECKS, issueID, type CheckId, type CheckReport, type ConfigNotice, type Issue } from "./types";
 
 export type { CheckReport, Issue } from "./types";
 
@@ -43,9 +44,14 @@ export async function runCheck(): Promise<CheckReport> {
   }
 
   issues.sort(compareIssues);
+  const ignored = await readIgnoredIssues();
   const counts = Object.fromEntries(CHECK_IDS.map((id) => [id, 0])) as Record<CheckId, number>;
   for (const issue of issues) {
-    counts[issue.check]++;
+    if (IGNORABLE_CHECKS.includes(issue.check) && ignored.has(issueID(issue))) {
+      issue.ignored = true;
+    } else {
+      counts[issue.check]++;
+    }
   }
   return {
     root,

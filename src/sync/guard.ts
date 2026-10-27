@@ -1,5 +1,5 @@
 import { pathKey, relativeTo, toAbsolute } from "../check/paths";
-import { COLLECTIONS_BUCKET, PLUGIN_TRASH, REPLACED_BUCKET } from "../check/snapshot";
+import { COLLECTIONS_BUCKET, ORPHANS_BUCKET, PLUGIN_TRASH, REPLACED_BUCKET, SET_ASIDE_BUCKETS } from "../check/snapshot";
 import { testDataDir } from "../utils/testDataDir";
 
 /** A precondition did not hold: the operation is skipped, nothing is done. */
@@ -11,6 +11,9 @@ export class Skip extends Error {
 
 /** Where replaced old versions go (§F3.6, §F4), relative to the files root. */
 export const REPLACED_DIR = `${PLUGIN_TRASH}/${REPLACED_BUCKET}`;
+
+/** Where stray files are set aside on the user's request (§F1.3), relative to the files root. */
+export const ORPHANS_DIR = `${PLUGIN_TRASH}/${ORPHANS_BUCKET}`;
 
 /**
  * Absolute path of `rel`, which must be a plain relative path strictly inside
@@ -71,10 +74,14 @@ export function resolveCollectionTrashPath(root: string, rel: string, depth: "fo
   return absoluteInRoot(root, rel);
 }
 
-/** Absolute path of `rel`, which must lie inside the plugin trash's replaced-versions area. */
+/**
+ * Absolute path of `rel`, which must lie inside one of the plugin trash's
+ * areas for files set aside (`_replaced`, `_orphans`): a dated batch folder
+ * or something in it.
+ */
 export function resolveReplacedPath(root: string, rel: string): string {
   const parts = plainParts(rel);
-  if (parts.length < 3 || pathKey(parts[0]) !== pathKey(PLUGIN_TRASH) || parts[1] !== REPLACED_BUCKET) {
+  if (parts.length < 3 || pathKey(parts[0]) !== pathKey(PLUGIN_TRASH) || !SET_ASIDE_BUCKETS.includes(parts[1])) {
     throw new Skip("not-in-replaced-area", rel);
   }
   return absoluteInRoot(root, rel);

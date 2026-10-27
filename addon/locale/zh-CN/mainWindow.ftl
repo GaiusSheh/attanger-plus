@@ -11,6 +11,7 @@ reveal-restore-dry-run = 试运行模式：没有真的恢复，要执行的操�
 reveal-restore-failed = 没能恢复「{ $file }」，原因见操作日志。
 changes-dry-run = 试运行模式：文件操作（恢复、同步、重新定位）没有真的执行，已记入操作日志；Zotero 里的改动（移出 collection、移进回收站、忽略）照常生效。
 changes-done = 已完成：恢复 { $restored } 份副本，从 collection 移除 { $removed } 次，同步 { $synced } 份副本，重新定位 { $relocated } 个文件，移进回收站 { $trashed } 项，忽略 { $ignored } 条。
+repair-done = 已修复检查报告里的 { $count } 项问题，报告已重新检查。
 changes-failed = 有 { $count } 项没能完成，原因见操作日志。
 # Shown after the unfiled window has closed, so it lives here (src/ui/unfiled.ts).
 unfiled-done = 加回 collection：{ $cancelled } 个条目；移进回收站：{ $trashedItems } 个条目；删除文件：{ $trashedFiles } 个条目；彻底删除：{ $erasedItems } 个条目；保留条目和文件（放到根目录）：{ $kept } 个条目。

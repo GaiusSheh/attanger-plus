@@ -1,7 +1,8 @@
 import type { FluentMessageId } from "../../typings/i10n";
 import { runCheck } from "../check";
 import { toAbsolute } from "../check/paths";
-import { CHECK_IDS, type CheckId, type CheckReport, type Issue } from "../check/types";
+import { CHECK_IDS, IGNORABLE_CHECKS, issueID, type CheckId, type CheckReport, type Issue } from "../check/types";
+import { repairsOf } from "../sync/repair";
 import { showChanges } from "./changes";
 import { l10nID } from "./l10n";
 
@@ -92,39 +93,50 @@ class ReportView {
     this.element("config").hidden = r.config.length === 0;
 
     const results = this.element("results");
-    if (!r.issues.length) {
+    const sections = CHECK_IDS.map((check) => r.issues.filter((i) => i.check === check))
+      .filter((list) => list.length)
+      .map((list) => this.section(list));
+    if (!r.issues.some((i) => !i.ignored)) {
       const p = this.create("p");
       p.className = "clean";
       this.localize(p, "report-clean");
-      results.replaceChildren(p);
-      return;
+      sections.unshift(p);
     }
-    results.replaceChildren(
-      ...CHECK_IDS.map((check) => r.issues.filter((i) => i.check === check))
-        .filter((list) => list.length)
-        .map((list) => this.section(list)),
-    );
+    results.replaceChildren(...sections);
   }
 
+  /** One check's issues; ignored ones (§F1.1, C12) listed apart at the end, not counted. */
   private section(issues: Issue[]): HTMLElement {
     const { check, severity } = issues[0];
+    const active = issues.filter((i) => !i.ignored);
+    const ignored = issues.filter((i) => i.ignored);
     const details = this.create("details");
-    details.open = true;
+    details.open = active.length > 0;
     const summary = this.create("summary");
     const title = this.create("span");
     this.localize(title, `check-${check}` as FluentMessageId);
     const badge = this.create("span");
     badge.className = `badge ${severity}`;
     this.localize(badge, `report-severity-${severity}`);
-    summary.append(`${check} · `, title, ` (${issues.length})`, badge);
+    summary.append(`${check} · `, title, ` (${active.length})`, badge);
     const list = this.create("ul");
-    list.append(...issues.map((issue) => this.row(issue)));
+    list.append(...active.map((issue) => this.row(issue)));
     details.append(summary, list);
+    if (ignored.length) {
+      const heading = this.create("p");
+      heading.className = "ignored-heading";
+      this.localize(heading, "report-ignored", { count: ignored.length });
+      const rest = this.create("ul");
+      rest.append(...ignored.map((issue) => this.row(issue)));
+      details.append(heading, rest);
+    }
     return details;
   }
 
   private row(issue: Issue): HTMLElement {
     const li = this.create("li");
+    li.classList.toggle("ignored", !!issue.ignored);
+    li.dataset.issue = issueID(issue);
     if (issue.itemKey) {
       li.append(this.link(issue.itemTitle || issue.itemKey, "item-link", () => selectItem(issue.itemKey!)), " — ");
     } else if (issue.collectionKey) {
@@ -141,22 +153,48 @@ class ReportView {
       this.localize(show, "report-show");
       li.append(show);
     }
+    if (IGNORABLE_CHECKS.includes(issue.check)) {
+      const toggle = this.link("", "ignore-link", () => this.setIgnored(issue, !issue.ignored));
+      this.localize(toggle, issue.ignored ? "report-unignore" : "report-ignore");
+      li.append(toggle);
+    }
     return li;
+  }
+
+  /** Ignore a notice for good (§F1.1, C12), or stop ignoring it; then check again. */
+  private async setIgnored(issue: Issue, ignored: boolean): Promise<void> {
+    const sync = Zotero.AttangerPlus?.sync;
+    if (!sync) {
+      throw new Error("Attanger Plus is not running");
+    }
+    await sync.setIssueIgnored(issueID(issue), ignored);
+    await this.run();
   }
 
   // ------------------------------------------------------------- export
 
-  /** Look for file-manager changes (§F3.6–F3.8) and open the window to decide on them. */
+  /**
+   * Look for file-manager changes (§F3.6–F3.8), add the repairs this report
+   * allows (§F1.3), and open the window to decide on them; check again once
+   * something was done.
+   */
   private async handleChanges(): Promise<void> {
     const sync = Zotero.AttangerPlus?.sync;
     if (!sync) {
       throw new Error("Attanger Plus is not running");
     }
+    if (!this.report) {
+      await this.run();
+    }
+    const repairs = this.report ? repairsOf(this.report) : [];
     const findings = await sync.inspect();
-    if (findings.length) {
-      await showChanges(findings);
-    } else {
+    if (!findings.length && !repairs.length) {
       Services.prompt.alert(this.win as unknown as mozIDOMWindowProxy, "Attanger Plus", await this.format("report-changes-none"));
+      return;
+    }
+    const { done } = await showChanges(findings, { repairs });
+    if (await done) {
+      await this.run();
     }
   }
 
@@ -253,7 +291,7 @@ export async function buildMarkdown(doc: Document, r: CheckReport): Promise<stri
     }
     lines.push("");
   }
-  if (!r.issues.length) {
+  if (!r.issues.some((i) => !i.ignored)) {
     lines.push(await format(doc, "report-clean"), "");
   }
   for (const check of CHECK_IDS) {
@@ -261,13 +299,22 @@ export async function buildMarkdown(doc: Document, r: CheckReport): Promise<stri
     if (!issues.length) {
       continue;
     }
+    const active = issues.filter((i) => !i.ignored);
+    const ignored = issues.filter((i) => i.ignored);
     const title = await format(doc, `check-${check}` as FluentMessageId);
     const severity = await format(doc, `report-severity-${issues[0].severity}`);
-    lines.push(`## ${check} · ${title} (${issues.length}) — ${severity}`, "");
-    for (const issue of issues) {
-      const subject = issue.itemKey ? issue.itemTitle || issue.itemKey : issue.collectionPath;
-      const text = await format(doc, issueMessage(issue), issueArgs(issue));
-      lines.push(subject ? `- **${subject}** — ${text}` : `- ${text}`);
+    lines.push(`## ${check} · ${title} (${active.length}) — ${severity}`, "");
+    const list = async (group: Issue[]) => {
+      for (const issue of group) {
+        const subject = issue.itemKey ? issue.itemTitle || issue.itemKey : issue.collectionPath;
+        const text = await format(doc, issueMessage(issue), issueArgs(issue));
+        lines.push(subject ? `- **${subject}** — ${text}` : `- ${text}`);
+      }
+    };
+    await list(active);
+    if (ignored.length) {
+      lines.push("", await format(doc, "report-ignored", { count: ignored.length }), "");
+      await list(ignored);
     }
     lines.push("");
   }
@@ -284,9 +331,10 @@ async function format(doc: Document, id: FluentMessageId, args?: L10nArgs): Prom
 }
 
 function summaryArgs(r: CheckReport): L10nArgs {
+  const active = r.issues.filter((i) => !i.ignored);
   return {
-    problems: r.issues.filter((i) => i.severity === "problem").length,
-    notices: r.issues.filter((i) => i.severity === "notice").length,
+    problems: active.filter((i) => i.severity === "problem").length,
+    notices: active.filter((i) => i.severity === "notice").length,
     items: r.stats.items,
     files: r.stats.files,
     seconds: (r.durationMs / 1000).toFixed(1),

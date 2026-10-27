@@ -184,6 +184,18 @@ export interface PurgeCollectionTrashOp {
   onlyIfEmpty: boolean;
 }
 
+/**
+ * Set a stray file aside on the user's request (§F1.3): `path`, in the root
+ * or in a plugin trash folder that no item claims, to `to` =
+ * `.attanger-plus-trash/_orphans/<stamp>/<path>`, purged after Zotero's
+ * trash period. Never a file a live attachment points at.
+ */
+export interface SetAsideOp {
+  op: "set-aside";
+  path: string;
+  to: string;
+}
+
 export type Operation =
   | CopyOp
   | DeleteOp
@@ -202,7 +214,8 @@ export type Operation =
   | RemoveEmptyFolderOp
   | TrashCollectionOp
   | UntrashCollectionOp
-  | PurgeCollectionTrashOp;
+  | PurgeCollectionTrashOp
+  | SetAsideOp;
 
 /**
  * - done: carried out and verified

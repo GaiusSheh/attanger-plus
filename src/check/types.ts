@@ -38,6 +38,16 @@ export interface Issue {
   related?: string[];
   /** Number of files, for folder issues. */
   count?: number;
+  /** The user chose to ignore it (only checks in IGNORABLE_CHECKS): not counted, listed apart. */
+  ignored?: boolean;
+}
+
+/** Notices the user may mark as fine for good (§F1.1): file names kept on purpose. */
+export const IGNORABLE_CHECKS: CheckId[] = ["C12"];
+
+/** Identifies an issue across runs, for ignoring it. */
+export function issueID(issue: Issue): string {
+  return `${issue.check}:${issue.kind}:${issue.attachmentKey ?? issue.path ?? ""}`;
 }
 
 /** Settings that make the check unreliable or impossible. */

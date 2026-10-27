@@ -2,7 +2,7 @@ import { templateBaseName } from "../utils/zotero";
 import type { Hasher } from "./hash";
 import { baseOf, dirOf, joinRel, pathKey } from "./paths";
 import type { AttachmentInfo, CollectionInfo, DiskFile, EntryInfo, Snapshot } from "./snapshot";
-import { COLLECTIONS_BUCKET, PLUGIN_TRASH, REPLACED_BUCKET } from "./snapshot";
+import { COLLECTIONS_BUCKET, PLUGIN_TRASH, SET_ASIDE_BUCKETS } from "./snapshot";
 import type { Issue } from "./types";
 
 /*
@@ -480,7 +480,7 @@ function checkTrash(s: Snapshot): Issue[] {
     }
   }
   for (const [name, files] of s.trash) {
-    if (name === REPLACED_BUCKET) {
+    if (SET_ASIDE_BUCKETS.includes(name)) {
       continue;
     }
     if (name === COLLECTIONS_BUCKET) {

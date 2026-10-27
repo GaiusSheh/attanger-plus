@@ -1,6 +1,6 @@
 import { baseOf, collectionFolder, dirOf, joinRel, pathKey, relativeTo, toAbsolute } from "../check/paths";
 import { collectionNames } from "../utils/zotero";
-import { REPLACED_DIR } from "./guard";
+import { ORPHANS_DIR, REPLACED_DIR } from "./guard";
 import type { Reconciled } from "./reconcile";
 import type { ImportOp, PurgeReplacedOp, ReplaceOp } from "./types";
 
@@ -188,22 +188,27 @@ export function stampDate(name: string): Date | null {
 }
 
 /**
- * Dated folders of replaced versions older than Zotero's own trash period
- * (`trashAutoEmptyDays`; 0 keeps them). Folders with other names are left
- * alone.
+ * Dated folders of replaced versions (§F3.6) and of files set aside (§F1.3)
+ * older than Zotero's own trash period (`trashAutoEmptyDays`; 0 keeps them).
+ * Folders with other names are left alone.
  */
 export async function purgeOps(root: string, now = new Date()): Promise<PurgeReplacedOp[]> {
   const days = Number(Zotero.Prefs.get("trashAutoEmptyDays") ?? 30);
-  const dir = toAbsolute(root, REPLACED_DIR);
-  if (!(days > 0) || !(await IOUtils.exists(dir))) {
+  if (!(days > 0)) {
     return [];
   }
   const ops: PurgeReplacedOp[] = [];
-  for (const child of await IOUtils.getChildren(dir)) {
-    const name = PathUtils.filename(child);
-    const date = stampDate(name);
-    if (date && now.getTime() - date.getTime() > days * 86_400_000) {
-      ops.push({ op: "purge-replaced", path: `${REPLACED_DIR}/${name}` });
+  for (const area of [REPLACED_DIR, ORPHANS_DIR]) {
+    const dir = toAbsolute(root, area);
+    if (!(await IOUtils.exists(dir))) {
+      continue;
+    }
+    for (const child of await IOUtils.getChildren(dir)) {
+      const name = PathUtils.filename(child);
+      const date = stampDate(name);
+      if (date && now.getTime() - date.getTime() > days * 86_400_000) {
+        ops.push({ op: "purge-replaced", path: `${area}/${name}` });
+      }
     }
   }
   return ops;

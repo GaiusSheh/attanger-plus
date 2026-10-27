@@ -15,6 +15,11 @@ reveal-restore-dry-run = Dry-run mode: nothing was restored; the operations were
 reveal-restore-failed = Could not restore “{ $file }”; see the operation log for why.
 changes-dry-run = Dry-run mode: the file operations (restore, sync, locate) were not carried out but written to the operation log; changes in Zotero (removal from a collection, moving to the trash, ignoring) took effect.
 changes-done = Done: { $restored } copies restored, { $removed } removed from a collection, { $synced } copies synced, { $relocated } files located, { $trashed } moved to the trash, { $ignored } ignored.
+repair-done =
+    { $count ->
+        [one] One problem from the check report repaired; the report was checked again.
+       *[other] { $count } problems from the check report repaired; the report was checked again.
+    }
 changes-failed =
     { $count ->
         [one] One step could not be completed; see the operation log for why.

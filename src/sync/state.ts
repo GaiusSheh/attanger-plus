@@ -34,10 +34,27 @@ interface StateFile {
    * descendants' folders without an event of their own. Absent before 3-4.
    */
   collections?: Record<string, string>;
+  /**
+   * Check report notices the user chose to ignore (§F1.1, C12), by issue ID:
+   * left out of the counts and listed apart. Kept apart from `ignored`, which
+   * forgets entries once their finding is gone. Absent before 4-2.
+   */
+  ignoredIssues?: string[];
 }
 
 export function stateFile(): string {
   return PathUtils.join(pluginDataDir(), "state.json");
+}
+
+/** The ignored check notices, read without touching the file (the check is read-only). */
+export async function readIgnoredIssues(): Promise<Set<string>> {
+  try {
+    const data = (await IOUtils.readJSON(stateFile())) as Partial<StateFile>;
+    return new Set(Array.isArray(data?.ignoredIssues) ? data.ignoredIssues : []);
+  } catch {
+    // No state yet, or one the plugin will set aside when it loads it.
+    return new Set();
+  }
 }
 
 export class AttachmentState {
@@ -78,6 +95,11 @@ export class AttachmentState {
   setIgnored(findingID: string, ignored: boolean): void {
     const rest = (this.data.ignored ?? []).filter((id) => id !== findingID);
     this.data.ignored = ignored ? [...rest, findingID] : rest;
+  }
+
+  setIssueIgnored(issueID: string, ignored: boolean): void {
+    const rest = (this.data.ignoredIssues ?? []).filter((id) => id !== issueID);
+    this.data.ignoredIssues = ignored ? [...rest, issueID] : rest;
   }
 
   set(attachmentKey: string, record: AttachmentRecord): void {

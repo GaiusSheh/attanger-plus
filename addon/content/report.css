@@ -103,9 +103,21 @@ a:hover {
   font-weight: 600;
 }
 
-.show-link {
+.show-link,
+.ignore-link {
   margin-left: 6px;
   font-size: 11px;
+}
+
+/* Ignored notices (§F1.1, C12): listed apart, greyed. */
+.ignored-heading,
+li.ignored {
+  color: GrayText;
+}
+
+.ignored-heading {
+  margin: 6px 0 2px;
+  font-size: 12px;
 }
 
 .clean {
